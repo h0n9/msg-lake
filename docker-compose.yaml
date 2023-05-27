@@ -4,7 +4,7 @@ services:
   agent:
     build:
       context: .
-    image: h0n9/msg-lake
+    image: ghcr.io/h0n9/msg-lake
     command: ["agent"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]
@@ -26,7 +26,7 @@ services:
   client:
     depends_on:
       - nginx
-    image: h0n9/msg-lake
+    image: ghcr.io/h0n9/msg-lake
     command: ["client", "--host", "nginx:8080"]
     deploy:
       replicas: 0
