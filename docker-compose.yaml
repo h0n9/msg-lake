@@ -1,0 +1,32 @@
+version: "3.8"
+
+services:
+  agent:
+    build:
+      context: .
+    image: h0n9/msg-lake
+    command: ["agent"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+    deploy:
+      replicas: 3
+  nginx:
+    depends_on:
+      - agent
+    image: nginx:1.23.4-alpine3.17
+    restart: always
+    volumes:
+      - ./misc/nginx.conf:/etc/nginx/conf.d/msg-lake.conf:ro
+    ports:
+      - 8080-8089:8080
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+    deploy:
+      replicas: 3
+  client:
+    depends_on:
+      - nginx
+    image: h0n9/msg-lake
+    command: ["client", "--host", "nginx:8080"]
+    deploy:
+      replicas: 0

@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+option go_package = "github.com/h0n9/msg-lake/proto";
+
+service Lake {
+  rpc Publish(PublishReq) returns (PublishRes);
+  rpc Subscribe(SubscribeReq) returns (stream SubscribeRes);
+}
+
+message PublishReq {
+  string topic_id = 1;
+  bytes data = 2;
+}
+
+message PublishRes {
+  string topic_id = 1;
+  bool ok = 2;
+}
+
+message SubscribeReq {
+  string topic_id = 1;
+}
+
+message SubscribeRes {
+  SubscribeResType type = 1;
+  string topic_id = 2;
+  string subscriber_id = 3;
+  oneof res {
+    bool ok = 4;
+    bytes data = 5;
+  }
+}
+
+enum SubscribeResType {
+  SUBSCRIBE_RES_TYPE_UNSPECIFIED = 0;
+  SUBSCRIBE_RES_TYPE_ACK = 1;
+  SUBSCRIBE_RES_TYPE_RELAY = 2;
+}
