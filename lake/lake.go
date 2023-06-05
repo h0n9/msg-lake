@@ -52,8 +52,9 @@ func (lakeService *LakeService) Close() {
 func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
 	// get parameters
 	topicID := req.GetTopicId()
-	data := req.GetData()
-	signature := req.GetSignature()
+	msgCapsule := req.GetMsgCapsule()
+	data := msgCapsule.GetData()
+	signature := msgCapsule.GetSignature()
 
 	// set publish res
 	publishRes := pb.PublishRes{
@@ -84,7 +85,7 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 	}
 
 	// publish msg
-	err = msgBox.Publish(data)
+	err = msgBox.Publish(msgCapsule)
 	if err != nil {
 		return &publishRes, err
 	}
@@ -97,8 +98,9 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
 	// get parameters
 	topicID := req.GetTopicId()
-	data := req.GetData()
-	signature := req.GetSignature()
+	msgCapsule := req.GetMsgCapsule()
+	data := msgCapsule.GetData()
+	signature := msgCapsule.GetSignature()
 
 	// set subscribe res
 	res := pb.SubscribeRes{
@@ -176,8 +178,8 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 	res.Type = pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY
 
 	// relay msgs to susbscriber
-	for data := range subscriberCh {
-		res.Res = &pb.SubscribeRes_Data{Data: data}
+	for msgCapsule := range subscriberCh {
+		res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
 		err := stream.Send(&res)
 		if err != nil {
 			err := msgBox.StopSubscription(subscriberID)
