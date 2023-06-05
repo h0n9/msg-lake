@@ -149,13 +149,14 @@ var Cmd = &cobra.Command{
 				if len(data) == 0 {
 					continue
 				}
+				timestamp := msgCapsule.GetTimestamp()
 				msg := Msg{}
 				err = json.Unmarshal(data, &msg)
 				if err != nil {
 					fmt.Println(err)
 					continue
 				}
-				printOutput(true, &msg)
+				printOutput(true, &msg, timestamp)
 				printInput(true)
 			}
 		}()
@@ -237,8 +238,8 @@ func printInput(newline bool) {
 	fmt.Printf(s, nickname)
 }
 
-func printOutput(newline bool, msg *Msg) {
-	s := "📩 <%s> %s"
+func printOutput(newline bool, msg *Msg, timestamp int64) {
+	s := "📩 [%d] <%s> %s"
 	if newline {
 		s = "\r\n" + s
 	}
@@ -248,7 +249,7 @@ func printOutput(newline bool, msg *Msg) {
 	if exist {
 		nickname = string(value)
 	}
-	fmt.Printf(s, nickname, msg.Data)
+	fmt.Printf(s, timestamp, nickname, msg.Data)
 }
 
 type Msg struct {

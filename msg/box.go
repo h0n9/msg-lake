@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"time"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/rs/zerolog"
@@ -114,6 +115,7 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 }
 
 func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
+	msgCapsule.Timestamp = time.Now().UnixNano()
 	data, err := proto.Marshal(msgCapsule)
 	if err != nil {
 		return err
