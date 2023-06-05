@@ -9,8 +9,7 @@ service Lake {
 
 message PublishReq {
   string topic_id = 1;
-  bytes data = 2;
-  Signature signature = 3;
+  MsgCapsule msg_capsule = 2;
 }
 
 message PublishRes {
@@ -20,8 +19,7 @@ message PublishRes {
 
 message SubscribeReq {
   string topic_id = 1;
-  bytes data = 2;
-  Signature signature = 3;
+  MsgCapsule msg_capsule = 2;
 }
 
 message SubscribeRes {
@@ -30,7 +28,7 @@ message SubscribeRes {
   string subscriber_id = 3;
   oneof res {
     bool ok = 4;
-    bytes data = 5;
+    MsgCapsule msg_capsule = 5;
   }
 }
 
@@ -38,6 +36,11 @@ enum SubscribeResType {
   SUBSCRIBE_RES_TYPE_UNSPECIFIED = 0;
   SUBSCRIBE_RES_TYPE_ACK = 1;
   SUBSCRIBE_RES_TYPE_RELAY = 2;
+}
+
+message MsgCapsule {
+  bytes data = 1;
+  Signature signature = 2;
 }
 
 message Signature {
