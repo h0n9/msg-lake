@@ -20,6 +20,8 @@ message PublishRes {
 
 message SubscribeReq {
   string topic_id = 1;
+  bytes data = 2;
+  Signature signature = 3;
 }
 
 message SubscribeRes {
