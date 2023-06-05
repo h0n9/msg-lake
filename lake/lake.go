@@ -6,6 +6,8 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/postie-labs/go-postie-lib/crypto"
+
 	pb "github.com/h0n9/msg-lake/proto"
 	"github.com/h0n9/msg-lake/relayer"
 	"github.com/h0n9/msg-lake/util"
@@ -50,7 +52,9 @@ func (lakeService *LakeService) Close() {
 func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
 	// get parameters
 	topicID := req.GetTopicId()
-	data := req.GetData()
+	msgCapsule := req.GetMsgCapsule()
+	data := msgCapsule.GetData()
+	signature := msgCapsule.GetSignature()
 
 	// set publish res
 	publishRes := pb.PublishRes{
@@ -61,6 +65,14 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 	// check constraints
 	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
 		return &publishRes, fmt.Errorf("failed to verify length of topic id")
+	}
+	pubKeyBytes := signature.GetPubKey()
+	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
+	if err != nil {
+		return &publishRes, err
+	}
+	if !pubKey.Verify(data, signature.GetData()) {
+		return &publishRes, fmt.Errorf("failed to verify signed data")
 	}
 
 	// get msg center
@@ -73,7 +85,7 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 	}
 
 	// publish msg
-	err = msgBox.Publish(data)
+	err = msgBox.Publish(msgCapsule)
 	if err != nil {
 		return &publishRes, err
 	}
@@ -86,6 +98,9 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
 	// get parameters
 	topicID := req.GetTopicId()
+	msgCapsule := req.GetMsgCapsule()
+	data := msgCapsule.GetData()
+	signature := msgCapsule.GetSignature()
 
 	// set subscribe res
 	res := pb.SubscribeRes{
@@ -98,6 +113,22 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 
 	// check constraints
 	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
+		err := stream.Send(&res)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	pubKeyBytes := signature.GetPubKey()
+	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
+	if err != nil {
+		err := stream.Send(&res)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	if !pubKey.Verify(data, signature.GetData()) {
 		err := stream.Send(&res)
 		if err != nil {
 			return err
@@ -147,8 +178,8 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 	res.Type = pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY
 
 	// relay msgs to susbscriber
-	for data := range subscriberCh {
-		res.Res = &pb.SubscribeRes_Data{Data: data}
+	for msgCapsule := range subscriberCh {
+		res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
 		err := stream.Send(&res)
 		if err != nil {
 			err := msgBox.StopSubscription(subscriberID)

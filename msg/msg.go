@@ -1,6 +1,10 @@
 package msg
 
-type SubscriberCh chan []byte
+import (
+	pb "github.com/h0n9/msg-lake/proto"
+)
+
+type SubscriberCh chan *pb.MsgCapsule
 
 type setSubscriber struct {
 	subscriberID string

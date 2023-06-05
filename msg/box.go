@@ -7,6 +7,9 @@ import (
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/rs/zerolog"
+	"google.golang.org/protobuf/proto"
+
+	pb "github.com/h0n9/msg-lake/proto"
 )
 
 type Box struct {
@@ -51,17 +54,17 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 	go func() {
 		defer box.wg.Done()
 		var (
-			msg []byte
+			msgCapsule *pb.MsgCapsule
 
 			setSubscriber    setSubscriber
 			deleteSubscriber deleteSubscriber
 		)
 		for {
 			select {
-			case msg = <-box.subscriberCh:
+			case msgCapsule = <-box.subscriberCh:
 				for subscriberID, subscriberCh := range box.subscribers {
 					subLogger.Debug().Str("subscriber-id", subscriberID).Msg("relaying")
-					subscriberCh <- msg
+					subscriberCh <- msgCapsule
 					subLogger.Debug().Str("subscriber-id", subscriberID).Msg("relayed")
 				}
 			case setSubscriber = <-box.setSubscriberCh:
@@ -92,18 +95,29 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 		defer box.wg.Done()
 		defer subscription.Cancel()
 		for {
-			msg, err := subscription.Next(ctx)
+			pubSubMsg, err := subscription.Next(ctx)
 			if err != nil {
 				subLogger.Err(err).Msg("")
 				return
 			}
-			box.subscriberCh <- msg.GetData()
+			data := pubSubMsg.GetData()
+			msgCapsule := pb.MsgCapsule{}
+			err = proto.Unmarshal(data, &msgCapsule)
+			if err != nil {
+				subLogger.Err(err).Msg("")
+				continue
+			}
+			box.subscriberCh <- &msgCapsule
 		}
 	}()
 	return &box, nil
 }
 
-func (box *Box) Publish(data []byte) error {
+func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
+	data, err := proto.Marshal(msgCapsule)
+	if err != nil {
+		return err
+	}
 	return box.topic.Publish(box.ctx, data)
 }
 
