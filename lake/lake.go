@@ -6,6 +6,8 @@ import (
 
 	"github.com/rs/zerolog"
 
+	"github.com/postie-labs/go-postie-lib/crypto"
+
 	pb "github.com/h0n9/msg-lake/proto"
 	"github.com/h0n9/msg-lake/relayer"
 	"github.com/h0n9/msg-lake/util"
@@ -51,6 +53,7 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 	// get parameters
 	topicID := req.GetTopicId()
 	data := req.GetData()
+	signature := req.GetSignature()
 
 	// set publish res
 	publishRes := pb.PublishRes{
@@ -61,6 +64,14 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 	// check constraints
 	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
 		return &publishRes, fmt.Errorf("failed to verify length of topic id")
+	}
+	pubKeyBytes := signature.GetPubKey()
+	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
+	if err != nil {
+		return &publishRes, err
+	}
+	if !pubKey.Verify(data, signature.GetData()) {
+		return &publishRes, fmt.Errorf("failed to verify signed data")
 	}
 
 	// get msg center
@@ -86,6 +97,8 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
 	// get parameters
 	topicID := req.GetTopicId()
+	data := req.GetData()
+	signature := req.GetSignature()
 
 	// set subscribe res
 	res := pb.SubscribeRes{
@@ -98,6 +111,22 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 
 	// check constraints
 	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
+		err := stream.Send(&res)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	pubKeyBytes := signature.GetPubKey()
+	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
+	if err != nil {
+		err := stream.Send(&res)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+	if !pubKey.Verify(data, signature.GetData()) {
 		err := stream.Send(&res)
 		if err != nil {
 			return err
