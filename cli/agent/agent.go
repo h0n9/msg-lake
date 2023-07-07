@@ -2,6 +2,8 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"math/big"
 	"net"
 	"os"
 
@@ -16,6 +18,13 @@ import (
 
 const (
 	DefaultGrpcListenAddr = "0.0.0.0:8080"
+	DefaultRelayerPortMin = 1024
+	DefaultRelayerPortMax = 49151
+)
+
+var (
+	grpcListenAddr string
+	relayerPort    int
 )
 
 var Cmd = &cobra.Command{
@@ -35,7 +44,7 @@ var Cmd = &cobra.Command{
 
 		grpcServer := grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
-		lakeService, err := lake.NewLakeService(ctx, &logger)
+		lakeService, err := lake.NewLakeService(ctx, &logger, relayerPort)
 		if err != nil {
 			return err
 		}
@@ -44,11 +53,11 @@ var Cmd = &cobra.Command{
 		pb.RegisterLakeServer(grpcServer, lakeService)
 		logger.Info().Msg("registered lake service to gRPC server")
 
-		listener, err := net.Listen("tcp", DefaultGrpcListenAddr)
+		listener, err := net.Listen("tcp", grpcListenAddr)
 		if err != nil {
 			return err
 		}
-		logger.Info().Msgf("listening gRPC server on %s", DefaultGrpcListenAddr)
+		logger.Info().Msgf("listening gRPC server on %s", grpcListenAddr)
 
 		err = grpcServer.Serve(listener)
 		if err != nil {
@@ -57,4 +66,18 @@ var Cmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func init() {
+	n, err := rand.Int(
+		rand.Reader,
+		big.NewInt(DefaultRelayerPortMax-DefaultRelayerPortMin),
+	)
+	if err != nil {
+		panic(err)
+	}
+	relayerPort := int(n.Int64()) + DefaultRelayerPortMin
+
+	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
+	Cmd.Flags().IntVarP(&relayerPort, "port", "p", relayerPort, "relayer port")
 }
