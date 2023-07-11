@@ -76,8 +76,8 @@ func init() {
 	if err != nil {
 		panic(err)
 	}
-	relayerPort := int(n.Int64()) + DefaultRelayerPortMin
+	randomRelayerPort := int(n.Int64()) + DefaultRelayerPortMin
 
 	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
-	Cmd.Flags().IntVarP(&relayerPort, "port", "p", relayerPort, "relayer port")
+	Cmd.Flags().IntVarP(&relayerPort, "port", "p", randomRelayerPort, "relayer port")
 }
