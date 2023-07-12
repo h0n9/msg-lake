@@ -38,7 +38,7 @@ type Relayer struct {
 	peerChan <-chan peer.AddrInfo
 }
 
-func NewRelayer(ctx context.Context, logger *zerolog.Logger, hostname string, port int) (*Relayer, error) {
+func NewRelayer(ctx context.Context, logger *zerolog.Logger, port int) (*Relayer, error) {
 	subLogger := logger.With().Str("module", "relayer").Logger()
 
 	privKey, pubKey, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
@@ -47,7 +47,7 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, hostname string, po
 	}
 	subLogger.Info().Msg("generated key pair for libp2p host")
 
-	h, err := newHost(hostname, port, privKey)
+	h, err := newHost(port, privKey)
 	if err != nil {
 		return nil, err
 	}
@@ -127,20 +127,30 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	n.peerChan <- pi
 }
 
-func newHost(hostname string, port int, privKey crypto.PrivKey) (host.Host, error) {
-	ma, err := multiaddr.NewMultiaddr(
-		fmt.Sprintf(
-			"/ip4/%s/udp/%d/quic",
-			hostname,
-			port,
-		),
-	)
+func newHost(port int, privKey crypto.PrivKey) (host.Host, error) {
+	listenAddrs, err := generateListenAddrs(port)
 	if err != nil {
 		return nil, err
 	}
 	return libp2p.New(
-		libp2p.ListenAddrs(ma),
+		libp2p.ListenAddrs(listenAddrs...),
 		libp2p.Identity(privKey),
 		libp2p.Transport(libp2pquic.NewTransport),
 	)
+}
+
+func generateListenAddrs(port int) ([]multiaddr.Multiaddr, error) {
+	addrs := []string{
+		"/ip4/0.0.0.0/udp/%d/quic",
+		"/ip6/::/udp/%d/quic",
+	}
+	listenAddrs := make([]multiaddr.Multiaddr, 0, len(addrs))
+	for _, s := range addrs {
+		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf(s, port))
+		if err != nil {
+			return nil, err
+		}
+		listenAddrs = append(listenAddrs, addr)
+	}
+	return listenAddrs, nil
 }
