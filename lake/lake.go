@@ -30,7 +30,7 @@ type LakeService struct {
 
 func NewLakeService(ctx context.Context, logger *zerolog.Logger, relayerPort int) (*LakeService, error) {
 	subLogger := logger.With().Str("module", "lake-service").Logger()
-	relayer, err := relayer.NewRelayer(ctx, logger, "0.0.0.0", relayerPort)
+	relayer, err := relayer.NewRelayer(ctx, logger, relayerPort)
 	if err != nil {
 		return nil, err
 	}
