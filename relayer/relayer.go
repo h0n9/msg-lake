@@ -13,6 +13,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 
 	"github.com/multiformats/go-multiaddr"
@@ -36,12 +37,13 @@ type Relayer struct {
 	h         host.Host
 	msgCenter *msg.Center
 
+	mdnsSvc  mdns.Service
 	peerChan <-chan peer.AddrInfo
 
 	d *dht.IpfsDHT
 }
 
-func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port int, bootstrapPeers []string) (*Relayer, error) {
+func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port int, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Relayer, error) {
 	subLogger := logger.With().Str("module", "relayer").Logger()
 
 	keyPairSrc := rand.Reader
@@ -71,36 +73,52 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 		pis = append(pis, *pi)
 	}
 
-	// init kad dht
-	d, err := dht.New(
-		ctx,
-		h,
-		dht.BootstrapPeers(pis...),
-		dht.Mode(dht.ModeServer),
-	)
-	if err != nil {
-		return nil, err
-	}
-	d.RoutingTable().PeerAdded = func(pi peer.ID) {
-		subLogger.Info().Str("peer", pi.String()).Msg("connected")
-	}
-	d.RoutingTable().PeerRemoved = func(pi peer.ID) {
-		subLogger.Info().Str("peer", pi.String()).Msg("disconnected")
-	}
+	relayer := Relayer{
+		ctx:    ctx,
+		logger: &subLogger,
 
-	subLogger.Info().Msg("initialized libp2p kad dht")
+		privKey: privKey,
+		pubKey:  pubKey,
 
-	d.Bootstrap(ctx)
-	subLogger.Info().Msg("bootstrapped libp2p kad dht")
+		h: h,
+	}
 
 	// init mdns service
-	// dn := newDiscoveryNotifee()
-	// svc := mdns.NewMdnsService(h, mdnsServiceName, dn)
-	// err = svc.Start()
-	// if err != nil {
-	// 	return nil, err
-	// }
-	// subLogger.Info().Msg("initialized mdns service")
+	if mdnsEnabled {
+		dn := newDiscoveryNotifee()
+		svc := mdns.NewMdnsService(h, mdnsServiceName, dn)
+		err = svc.Start()
+		if err != nil {
+			return nil, err
+		}
+		relayer.mdnsSvc = svc
+		relayer.peerChan = dn.peerChan
+		subLogger.Info().Msg("initialized mdns service")
+	}
+
+	// init kad dht
+	if dhtEnabled {
+		d, err := dht.New(
+			ctx,
+			h,
+			dht.BootstrapPeers(pis...),
+			dht.Mode(dht.ModeServer),
+		)
+		if err != nil {
+			return nil, err
+		}
+		d.RoutingTable().PeerAdded = func(pi peer.ID) {
+			subLogger.Info().Str("peer", pi.String()).Msg("connected")
+		}
+		d.RoutingTable().PeerRemoved = func(pi peer.ID) {
+			subLogger.Info().Str("peer", pi.String()).Msg("disconnected")
+		}
+		relayer.d = d
+		subLogger.Info().Msg("initialized libp2p kad dht")
+
+		d.Bootstrap(ctx)
+		subLogger.Info().Msg("bootstrapped libp2p kad dht")
+	}
 
 	subLogger.Info().Msgf("listening address %v", h.Addrs())
 	subLogger.Info().Msgf("libp2p peer ID %s", h.ID())
@@ -109,30 +127,28 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 	if err != nil {
 		return nil, err
 	}
+	relayer.msgCenter = msg.NewCenter(ctx, &subLogger, ps)
 	subLogger.Info().Msg("initialized gossip sub")
 
-	return &Relayer{
-		ctx:    ctx,
-		logger: &subLogger,
-
-		privKey: privKey,
-		pubKey:  pubKey,
-
-		h:         h,
-		msgCenter: msg.NewCenter(ctx, &subLogger, ps),
-
-		d: d,
-		// peerChan: dn.peerChan,
-	}, nil
+	return &relayer, nil
 }
 
 func (relayer *Relayer) Close() {
-	err := relayer.d.Close()
-	if err != nil {
-		relayer.logger.Err(err).Msg("")
+	if relayer.mdnsSvc != nil {
+		err := relayer.mdnsSvc.Close()
+		if err != nil {
+			relayer.logger.Err(err).Msg("")
+		}
+		relayer.logger.Info().Msg("closed mdns service")
 	}
-	relayer.logger.Info().Msg("closed kad dht")
-	err = relayer.h.Close()
+	if relayer.d != nil {
+		err := relayer.d.Close()
+		if err != nil {
+			relayer.logger.Err(err).Msg("")
+		}
+		relayer.logger.Info().Msg("closed kad dht")
+	}
+	err := relayer.h.Close()
 	if err != nil {
 		relayer.logger.Err(err).Msg("")
 	}

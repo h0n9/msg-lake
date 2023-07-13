@@ -26,6 +26,10 @@ var (
 	grpcListenAddr string
 	relayerPort    int
 	seed           int64
+
+	mdnsEnabled bool
+	dhtEnabled  bool
+
 	bootstrapPeers []string
 )
 
@@ -46,7 +50,15 @@ var Cmd = &cobra.Command{
 
 		grpcServer := grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
-		lakeService, err := lake.NewLakeService(ctx, &logger, seed, relayerPort, bootstrapPeers)
+		lakeService, err := lake.NewLakeService(
+			ctx,
+			&logger,
+			seed,
+			relayerPort,
+			mdnsEnabled,
+			dhtEnabled,
+			bootstrapPeers,
+		)
 		if err != nil {
 			return err
 		}
@@ -83,5 +95,7 @@ func init() {
 	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
 	Cmd.Flags().IntVarP(&relayerPort, "port", "p", randomRelayerPort, "relayer port")
 	Cmd.Flags().Int64Var(&seed, "seed", 0, "private key seed")
-	Cmd.Flags().StringSliceVar(&bootstrapPeers, "peers", []string{}, "bootstrap peers")
+	Cmd.Flags().BoolVar(&mdnsEnabled, "mdns", false, "enable mdns service")
+	Cmd.Flags().BoolVar(&dhtEnabled, "dht", false, "enable kad dht")
+	Cmd.Flags().StringSliceVar(&bootstrapPeers, "peers", []string{}, "bootstrap peers for kad dht")
 }
