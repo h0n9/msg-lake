@@ -4,14 +4,15 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	mrand "math/rand"
 
 	"github.com/libp2p/go-libp2p"
+	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
-	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
 
 	"github.com/multiformats/go-multiaddr"
@@ -36,12 +37,18 @@ type Relayer struct {
 	msgCenter *msg.Center
 
 	peerChan <-chan peer.AddrInfo
+
+	d *dht.IpfsDHT
 }
 
-func NewRelayer(ctx context.Context, logger *zerolog.Logger, port int) (*Relayer, error) {
+func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port int, bootstrapPeers []string) (*Relayer, error) {
 	subLogger := logger.With().Str("module", "relayer").Logger()
 
-	privKey, pubKey, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, rand.Reader)
+	keyPairSrc := rand.Reader
+	if seed != 0 {
+		keyPairSrc = mrand.New(mrand.NewSource(seed))
+	}
+	privKey, pubKey, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, keyPairSrc)
 	if err != nil {
 		return nil, err
 	}
@@ -53,16 +60,35 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, port int) (*Relayer
 	}
 	subLogger.Info().Msg("initialized libp2p host")
 
-	// init mdns service
-	dn := newDiscoveryNotifee()
-	svc := mdns.NewMdnsService(h, mdnsServiceName, dn)
-	err = svc.Start()
+	// init kad dht
+	d, err := dht.New(ctx, h)
 	if err != nil {
 		return nil, err
 	}
-	subLogger.Info().Msg("initialized mdns service")
+
+	for _, addr := range bootstrapPeers {
+		pi, err := peer.AddrInfoFromString(addr)
+		if err != nil {
+			logger.Err(err).Str("addr", addr).Msg("")
+			continue
+		}
+		err = h.Connect(ctx, *pi)
+		if err != nil {
+			logger.Err(err).Str("peer", pi.String()).Msg("")
+		}
+	}
+
+	// init mdns service
+	// dn := newDiscoveryNotifee()
+	// svc := mdns.NewMdnsService(h, mdnsServiceName, dn)
+	// err = svc.Start()
+	// if err != nil {
+	// 	return nil, err
+	// }
+	// subLogger.Info().Msg("initialized mdns service")
 
 	subLogger.Info().Msgf("listening libp2p host on %v", h.Addrs())
+	subLogger.Info().Msgf("libp2p peer ID %s", h.ID())
 
 	ps, err := pubsub.NewGossipSub(ctx, h)
 	if err != nil {
@@ -80,7 +106,8 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, port int) (*Relayer
 		h:         h,
 		msgCenter: msg.NewCenter(ctx, &subLogger, ps),
 
-		peerChan: dn.peerChan,
+		d: d,
+		// peerChan: dn.peerChan,
 	}, nil
 }
 

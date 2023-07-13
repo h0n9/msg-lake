@@ -28,9 +28,9 @@ type LakeService struct {
 	relayer *relayer.Relayer
 }
 
-func NewLakeService(ctx context.Context, logger *zerolog.Logger, relayerPort int) (*LakeService, error) {
+func NewLakeService(ctx context.Context, logger *zerolog.Logger, seed int64, relayerPort int, bootstrapPeers []string) (*LakeService, error) {
 	subLogger := logger.With().Str("module", "lake-service").Logger()
-	relayer, err := relayer.NewRelayer(ctx, logger, relayerPort)
+	relayer, err := relayer.NewRelayer(ctx, logger, seed, relayerPort, bootstrapPeers)
 	if err != nil {
 		return nil, err
 	}

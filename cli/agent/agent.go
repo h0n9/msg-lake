@@ -25,6 +25,8 @@ const (
 var (
 	grpcListenAddr string
 	relayerPort    int
+	seed           int64
+	bootstrapPeers []string
 )
 
 var Cmd = &cobra.Command{
@@ -44,7 +46,7 @@ var Cmd = &cobra.Command{
 
 		grpcServer := grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
-		lakeService, err := lake.NewLakeService(ctx, &logger, relayerPort)
+		lakeService, err := lake.NewLakeService(ctx, &logger, seed, relayerPort, bootstrapPeers)
 		if err != nil {
 			return err
 		}
@@ -80,4 +82,6 @@ func init() {
 
 	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
 	Cmd.Flags().IntVarP(&relayerPort, "port", "p", randomRelayerPort, "relayer port")
+	Cmd.Flags().Int64Var(&seed, "seed", 0, "private key seed")
+	Cmd.Flags().StringSliceVar(&bootstrapPeers, "peers", []string{}, "bootstrap peers")
 }
