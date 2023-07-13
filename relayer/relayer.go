@@ -60,23 +60,38 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 	}
 	subLogger.Info().Msg("initialized libp2p host")
 
-	// init kad dht
-	d, err := dht.New(ctx, h)
-	if err != nil {
-		return nil, err
-	}
-
+	// convert string formatted bootstrap peer addrs to peer.AddrInfo
+	pis := []peer.AddrInfo{}
 	for _, addr := range bootstrapPeers {
 		pi, err := peer.AddrInfoFromString(addr)
 		if err != nil {
 			logger.Err(err).Str("addr", addr).Msg("")
 			continue
 		}
+		subLogger.Info().Str("peer", pi.String()).Msg("connecting")
 		err = h.Connect(ctx, *pi)
 		if err != nil {
 			logger.Err(err).Str("peer", pi.String()).Msg("")
+			continue
 		}
+		subLogger.Info().Str("peer", pi.String()).Msg("connected")
+		pis = append(pis, *pi)
 	}
+
+	// init kad dht
+	d, err := dht.New(
+		ctx,
+		h,
+		dht.BootstrapPeers(pis...),
+		dht.Mode(dht.ModeServer),
+	)
+	if err != nil {
+		return nil, err
+	}
+	subLogger.Info().Msg("initialized libp2p kad dht")
+
+	d.Bootstrap(ctx)
+	subLogger.Info().Msg("bootstrapped libp2p kad dht")
 
 	// init mdns service
 	// dn := newDiscoveryNotifee()
@@ -87,7 +102,7 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 	// }
 	// subLogger.Info().Msg("initialized mdns service")
 
-	subLogger.Info().Msgf("listening libp2p host on %v", h.Addrs())
+	subLogger.Info().Msgf("listening address %v", h.Addrs())
 	subLogger.Info().Msgf("libp2p peer ID %s", h.ID())
 
 	ps, err := pubsub.NewGossipSub(ctx, h)
