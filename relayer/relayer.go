@@ -68,13 +68,6 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 			logger.Err(err).Str("addr", addr).Msg("")
 			continue
 		}
-		subLogger.Info().Str("peer", pi.String()).Msg("connecting")
-		err = h.Connect(ctx, *pi)
-		if err != nil {
-			logger.Err(err).Str("peer", pi.String()).Msg("")
-			continue
-		}
-		subLogger.Info().Str("peer", pi.String()).Msg("connected")
 		pis = append(pis, *pi)
 	}
 
@@ -88,6 +81,13 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 	if err != nil {
 		return nil, err
 	}
+	d.RoutingTable().PeerAdded = func(pi peer.ID) {
+		subLogger.Info().Str("peer", pi.String()).Msg("connected")
+	}
+	d.RoutingTable().PeerRemoved = func(pi peer.ID) {
+		subLogger.Info().Str("peer", pi.String()).Msg("disconnected")
+	}
+
 	subLogger.Info().Msg("initialized libp2p kad dht")
 
 	d.Bootstrap(ctx)
@@ -127,7 +127,12 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 }
 
 func (relayer *Relayer) Close() {
-	err := relayer.h.Close()
+	err := relayer.d.Close()
+	if err != nil {
+		relayer.logger.Err(err).Msg("")
+	}
+	relayer.logger.Info().Msg("closed kad dht")
+	err = relayer.h.Close()
 	if err != nil {
 		relayer.logger.Err(err).Msg("")
 	}
