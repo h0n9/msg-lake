@@ -239,7 +239,7 @@ func printInput(newline bool) {
 }
 
 func printOutput(newline bool, msg *Msg, timestamp int64) {
-	s := "📩 [%d] <%s> %s"
+	s := "📩 <%s> [%d] %s"
 	if newline {
 		s = "\r\n" + s
 	}
@@ -249,7 +249,7 @@ func printOutput(newline bool, msg *Msg, timestamp int64) {
 	if exist {
 		nickname = string(value)
 	}
-	fmt.Printf(s, timestamp, nickname, msg.Data)
+	fmt.Printf(s, nickname, timestamp, msg.Data)
 }
 
 type Msg struct {
