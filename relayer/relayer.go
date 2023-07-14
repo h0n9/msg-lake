@@ -51,7 +51,7 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs 
 	if err != nil {
 		return nil, err
 	}
-	if seed != nil {
+	if seed != nil && len(seed) > 0 {
 		privKey, err = crypto.GenPrivKeyFromSeed(seed)
 		if err != nil {
 			return nil, err
