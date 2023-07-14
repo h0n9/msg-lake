@@ -2,7 +2,6 @@ package relayer
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
@@ -41,7 +40,7 @@ type Relayer struct {
 	d *dht.IpfsDHT
 }
 
-func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, port int, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Relayer, error) {
+func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs []string, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Relayer, error) {
 	subLogger := logger.With().Str("module", "relayer").Logger()
 
 	var (
@@ -60,7 +59,7 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, port i
 	}
 	subLogger.Info().Msg("generated key pair for libp2p host")
 
-	h, err := newHost(port, privKey)
+	h, err := newHost(addrs, privKey)
 	if err != nil {
 		return nil, err
 	}
@@ -194,8 +193,8 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	n.peerChan <- pi
 }
 
-func newHost(port int, privKey *crypto.PrivKey) (host.Host, error) {
-	listenAddrs, err := generateListenAddrs(port)
+func newHost(addrs []string, privKey *crypto.PrivKey) (host.Host, error) {
+	listenAddrs, err := generateListenAddrs(addrs)
 	if err != nil {
 		return nil, err
 	}
@@ -210,14 +209,10 @@ func newHost(port int, privKey *crypto.PrivKey) (host.Host, error) {
 	)
 }
 
-func generateListenAddrs(port int) ([]multiaddr.Multiaddr, error) {
-	addrs := []string{
-		"/ip4/0.0.0.0/udp/%d/quic",
-		"/ip6/::/udp/%d/quic",
-	}
+func generateListenAddrs(addrs []string) ([]multiaddr.Multiaddr, error) {
 	listenAddrs := make([]multiaddr.Multiaddr, 0, len(addrs))
 	for _, s := range addrs {
-		addr, err := multiaddr.NewMultiaddr(fmt.Sprintf(s, port))
+		addr, err := multiaddr.NewMultiaddr(s)
 		if err != nil {
 			return nil, err
 		}

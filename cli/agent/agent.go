@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -24,7 +25,7 @@ const (
 
 var (
 	grpcListenAddr string
-	relayerPort    int
+	relayerAddrs   []string
 	seed           string
 
 	mdnsEnabled bool
@@ -54,7 +55,7 @@ var Cmd = &cobra.Command{
 			ctx,
 			&logger,
 			[]byte(seed),
-			relayerPort,
+			relayerAddrs,
 			mdnsEnabled,
 			dhtEnabled,
 			bootstrapPeers,
@@ -93,7 +94,10 @@ func init() {
 	randomRelayerPort := int(n.Int64()) + DefaultRelayerPortMin
 
 	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
-	Cmd.Flags().IntVarP(&relayerPort, "port", "p", randomRelayerPort, "relayer port")
+	Cmd.Flags().StringSliceVar(&relayerAddrs, "addrs", []string{
+		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic", randomRelayerPort),
+		fmt.Sprintf("/ip6/::/udp/%d/quic", randomRelayerPort),
+	}, "relayer port")
 	Cmd.Flags().StringVar(&seed, "seed", "", "private key seed")
 	Cmd.Flags().BoolVar(&mdnsEnabled, "mdns", false, "enable mdns service")
 	Cmd.Flags().BoolVar(&dhtEnabled, "dht", false, "enable kad dht")
