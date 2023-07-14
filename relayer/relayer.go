@@ -2,19 +2,17 @@ package relayer
 
 import (
 	"context"
-	"crypto/rand"
 	"fmt"
-	mrand "math/rand"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
-	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
 	libp2pquic "github.com/libp2p/go-libp2p/p2p/transport/quic"
+	"github.com/postie-labs/go-postie-lib/crypto"
 
 	"github.com/multiformats/go-multiaddr"
 	"github.com/rs/zerolog"
@@ -31,8 +29,8 @@ type Relayer struct {
 	ctx    context.Context
 	logger *zerolog.Logger
 
-	privKey crypto.PrivKey
-	pubKey  crypto.PubKey
+	privKey *crypto.PrivKey
+	pubKey  *crypto.PubKey
 
 	h         host.Host
 	msgCenter *msg.Center
@@ -43,16 +41,22 @@ type Relayer struct {
 	d *dht.IpfsDHT
 }
 
-func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port int, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Relayer, error) {
+func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, port int, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Relayer, error) {
 	subLogger := logger.With().Str("module", "relayer").Logger()
 
-	keyPairSrc := rand.Reader
-	if seed != 0 {
-		keyPairSrc = mrand.New(mrand.NewSource(seed))
-	}
-	privKey, pubKey, err := crypto.GenerateKeyPairWithReader(crypto.RSA, 2048, keyPairSrc)
+	var (
+		privKey *crypto.PrivKey
+		err     error
+	)
+	privKey, err = crypto.GenPrivKey()
 	if err != nil {
 		return nil, err
+	}
+	if seed != nil {
+		privKey, err = crypto.GenPrivKeyFromSeed(seed)
+		if err != nil {
+			return nil, err
+		}
 	}
 	subLogger.Info().Msg("generated key pair for libp2p host")
 
@@ -78,7 +82,7 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed int64, port in
 		logger: &subLogger,
 
 		privKey: privKey,
-		pubKey:  pubKey,
+		pubKey:  privKey.PubKey(),
 
 		h: h,
 	}
@@ -190,14 +194,18 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	n.peerChan <- pi
 }
 
-func newHost(port int, privKey crypto.PrivKey) (host.Host, error) {
+func newHost(port int, privKey *crypto.PrivKey) (host.Host, error) {
 	listenAddrs, err := generateListenAddrs(port)
+	if err != nil {
+		return nil, err
+	}
+	privKeyP2P, err := privKey.ToECDSAP2P()
 	if err != nil {
 		return nil, err
 	}
 	return libp2p.New(
 		libp2p.ListenAddrs(listenAddrs...),
-		libp2p.Identity(privKey),
+		libp2p.Identity(privKeyP2P),
 		libp2p.Transport(libp2pquic.NewTransport),
 	)
 }
