@@ -90,6 +90,8 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 		return &publishRes, err
 	}
 
+	lakeService.logger.Debug().Str("addr", string(pubKey.Address())).Msg("published")
+
 	// update publish res
 	publishRes.Ok = true
 
