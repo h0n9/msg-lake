@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -24,7 +25,13 @@ const (
 
 var (
 	grpcListenAddr string
-	relayerPort    int
+	relayerAddrs   []string
+	seed           string
+
+	mdnsEnabled bool
+	dhtEnabled  bool
+
+	bootstrapPeers []string
 )
 
 var Cmd = &cobra.Command{
@@ -44,7 +51,15 @@ var Cmd = &cobra.Command{
 
 		grpcServer := grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
-		lakeService, err := lake.NewLakeService(ctx, &logger, relayerPort)
+		lakeService, err := lake.NewLakeService(
+			ctx,
+			&logger,
+			[]byte(seed),
+			relayerAddrs,
+			mdnsEnabled,
+			dhtEnabled,
+			bootstrapPeers,
+		)
 		if err != nil {
 			return err
 		}
@@ -79,5 +94,12 @@ func init() {
 	randomRelayerPort := int(n.Int64()) + DefaultRelayerPortMin
 
 	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
-	Cmd.Flags().IntVarP(&relayerPort, "port", "p", randomRelayerPort, "relayer port")
+	Cmd.Flags().StringSliceVar(&relayerAddrs, "addrs", []string{
+		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic", randomRelayerPort),
+		fmt.Sprintf("/ip6/::/udp/%d/quic", randomRelayerPort),
+	}, "relayer port")
+	Cmd.Flags().StringVar(&seed, "seed", "", "private key seed")
+	Cmd.Flags().BoolVar(&mdnsEnabled, "mdns", false, "enable mdns service")
+	Cmd.Flags().BoolVar(&dhtEnabled, "dht", false, "enable kad dht")
+	Cmd.Flags().StringSliceVar(&bootstrapPeers, "peers", []string{}, "bootstrap peers for kad dht")
 }

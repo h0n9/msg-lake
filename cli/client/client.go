@@ -178,49 +178,52 @@ var Cmd = &cobra.Command{
 				if input == "" {
 					continue
 				}
-				msg := Msg{
-					Data: []byte(input),
-					Metadata: map[string][]byte{
-						"nickname": []byte(nickname),
-					},
-				}
-				data, err := json.Marshal(msg)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-				sigDataBytes, err := privKey.Sign(data)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-
-				pubRes, err := cli.Publish(ctx, &pb.PublishReq{
-					TopicId: topicID,
-					MsgCapsule: &pb.MsgCapsule{
-						Data: data,
-						Signature: &pb.Signature{
-							PubKey: pubKeyBytes,
-							Data:   sigDataBytes,
+				go func() {
+					msg := Msg{
+						Data: []byte(input),
+						Metadata: map[string][]byte{
+							"nickname": []byte(nickname),
 						},
-					},
-				})
-				if err == io.EOF {
-					err := stream.CloseSend()
+					}
+					data, err := json.Marshal(msg)
 					if err != nil {
 						fmt.Println(err)
+						return
 					}
-				}
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
+					sigDataBytes, err := privKey.Sign(data)
+					if err != nil {
+						fmt.Println(err)
+						return
+					}
 
-				// check publish res
-				if !pubRes.GetOk() {
-					fmt.Println("failed to send message")
-					continue
-				}
+					pubRes, err := cli.Publish(ctx, &pb.PublishReq{
+						TopicId: topicID,
+						MsgCapsule: &pb.MsgCapsule{
+							Data: data,
+							Signature: &pb.Signature{
+								PubKey: pubKeyBytes,
+								Data:   sigDataBytes,
+							},
+						},
+					})
+					if err == io.EOF {
+						err := stream.CloseSend()
+						if err != nil {
+							fmt.Println(err)
+							cancel()
+						}
+					}
+					if err != nil {
+						fmt.Println(err)
+						return
+					}
+
+					// check publish res
+					if !pubRes.GetOk() {
+						fmt.Println("failed to send message")
+						return
+					}
+				}()
 			}
 		}()
 
@@ -239,7 +242,7 @@ func printInput(newline bool) {
 }
 
 func printOutput(newline bool, msg *Msg, timestamp int64) {
-	s := "📩 [%d] <%s> %s"
+	s := "📩 <%s> [%d] %s"
 	if newline {
 		s = "\r\n" + s
 	}
@@ -249,7 +252,7 @@ func printOutput(newline bool, msg *Msg, timestamp int64) {
 	if exist {
 		nickname = string(value)
 	}
-	fmt.Printf(s, timestamp, nickname, msg.Data)
+	fmt.Printf(s, nickname, timestamp, msg.Data)
 }
 
 type Msg struct {
