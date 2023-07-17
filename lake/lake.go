@@ -20,7 +20,7 @@ const (
 	RandomSubscriberIDLen = 10
 )
 
-type LakeService struct {
+type Service struct {
 	pb.UnimplementedLakeServer
 
 	ctx     context.Context
@@ -28,28 +28,28 @@ type LakeService struct {
 	relayer *relayer.Relayer
 }
 
-func NewLakeService(ctx context.Context, logger *zerolog.Logger, seed []byte, relayerAddrs []string, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*LakeService, error) {
+func NewService(ctx context.Context, logger *zerolog.Logger, seed []byte, relayerAddrs []string, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Service, error) {
 	subLogger := logger.With().Str("module", "lake-service").Logger()
 	relayer, err := relayer.NewRelayer(ctx, logger, seed, relayerAddrs, mdnsEnabled, dhtEnabled, bootstrapPeers)
 	if err != nil {
 		return nil, err
 	}
 	go relayer.DiscoverPeers()
-	return &LakeService{
+	return &Service{
 		ctx:     ctx,
 		logger:  &subLogger,
 		relayer: relayer,
 	}, nil
 }
 
-func (lakeService *LakeService) Close() {
-	if lakeService.relayer != nil {
-		lakeService.relayer.Close()
+func (service *Service) Close() {
+	if service.relayer != nil {
+		service.relayer.Close()
 	}
-	lakeService.logger.Info().Msg("closed lake service")
+	service.logger.Info().Msg("closed lake service")
 }
 
-func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
+func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
 	// get parameters
 	topicID := req.GetTopicId()
 	msgCapsule := req.GetMsgCapsule()
@@ -76,7 +76,7 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 	}
 
 	// get msg center
-	msgCenter := lakeService.relayer.GetMsgCenter()
+	msgCenter := service.relayer.GetMsgCenter()
 
 	// get msg box
 	msgBox, err := msgCenter.GetBox(topicID)
@@ -90,14 +90,14 @@ func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq)
 		return &publishRes, err
 	}
 
-	lakeService.logger.Debug().Str("addr", string(pubKey.Address())).Msg("published")
+	service.logger.Debug().Str("addr", string(pubKey.Address())).Msg("published")
 
 	// update publish res
 	publishRes.Ok = true
 
 	return &publishRes, nil
 }
-func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
+func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
 	// get parameters
 	topicID := req.GetTopicId()
 	msgCapsule := req.GetMsgCapsule()
@@ -139,7 +139,7 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 	}
 
 	// get msg center
-	msgCenter := lakeService.relayer.GetMsgCenter()
+	msgCenter := service.relayer.GetMsgCenter()
 
 	// get msg box
 	msgBox, err := msgCenter.GetBox(topicID)
@@ -164,7 +164,7 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 		return nil
 	}
 
-	lakeService.logger.Debug().Str("subscriber-id", subscriberID).Msg("registered")
+	service.logger.Debug().Str("subscriber-id", subscriberID).Msg("registered")
 
 	// update subscriber res
 	res.SubscriberId = subscriberID
@@ -186,7 +186,7 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 		if err != nil {
 			err := msgBox.StopSubscription(subscriberID)
 			if err != nil {
-				lakeService.logger.Err(err).Msg("")
+				service.logger.Err(err).Msg("")
 			}
 			break
 		}

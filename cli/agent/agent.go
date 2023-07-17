@@ -51,7 +51,7 @@ var Cmd = &cobra.Command{
 
 		grpcServer := grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
-		lakeService, err := lake.NewLakeService(
+		lakeService, err := lake.NewService(
 			ctx,
 			&logger,
 			[]byte(seed),
