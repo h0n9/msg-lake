@@ -50,28 +50,24 @@ func (service *Service) Close() {
 }
 
 func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
-	// get parameters
-	topicID := req.GetTopicId()
-	msgCapsule := req.GetMsgCapsule()
-	data := msgCapsule.GetData()
-	signature := msgCapsule.GetSignature()
-
 	// set publish res
 	publishRes := pb.PublishRes{
-		TopicId: topicID,
+		TopicId: req.GetTopicId(),
 		Ok:      false,
 	}
 
 	// check constraints
-	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
+	if !util.CheckStrLen(req.GetTopicId(), MinTopicIDLen, MaxTopicIDLen) {
 		return &publishRes, fmt.Errorf("failed to verify length of topic id")
 	}
-	pubKeyBytes := signature.GetPubKey()
-	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
+	pubKey, err := crypto.GenPubKeyFromBytes(req.GetMsgCapsule().GetSignature().GetPubKey())
 	if err != nil {
 		return &publishRes, err
 	}
-	if !pubKey.Verify(data, signature.GetData()) {
+	if !pubKey.Verify(
+		req.GetMsgCapsule().GetData(),
+		req.GetMsgCapsule().GetSignature().GetData(),
+	) {
 		return &publishRes, fmt.Errorf("failed to verify signed data")
 	}
 
@@ -79,13 +75,13 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 	msgCenter := service.relayer.GetMsgCenter()
 
 	// get msg box
-	msgBox, err := msgCenter.GetBox(topicID)
+	msgBox, err := msgCenter.GetBox(req.GetTopicId())
 	if err != nil {
 		return &publishRes, err
 	}
 
 	// publish msg
-	err = msgBox.Publish(msgCapsule)
+	err = msgBox.Publish(req.GetMsgCapsule())
 	if err != nil {
 		return &publishRes, err
 	}
@@ -98,30 +94,24 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 	return &publishRes, nil
 }
 func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
-	// get parameters
-	topicID := req.GetTopicId()
-	msgCapsule := req.GetMsgCapsule()
-	data := msgCapsule.GetData()
-	signature := msgCapsule.GetSignature()
-
 	// set subscribe res
 	res := pb.SubscribeRes{
 		Type:    pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK,
-		TopicId: topicID,
+		TopicId: req.GetTopicId(),
 		Res: &pb.SubscribeRes_Ok{
 			Ok: false,
 		},
 	}
 
 	// check constraints
-	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
+	if !util.CheckStrLen(req.GetTopicId(), MinTopicIDLen, MaxTopicIDLen) {
 		err := stream.Send(&res)
 		if err != nil {
 			return err
 		}
 		return nil
 	}
-	pubKeyBytes := signature.GetPubKey()
+	pubKeyBytes := req.MsgCapsule.GetSignature().GetPubKey()
 	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
 	if err != nil {
 		err := stream.Send(&res)
@@ -130,7 +120,10 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_Subscribe
 		}
 		return nil
 	}
-	if !pubKey.Verify(data, signature.GetData()) {
+	if !pubKey.Verify(
+		req.GetMsgCapsule().GetData(),
+		req.GetMsgCapsule().GetSignature().GetData(),
+	) {
 		err := stream.Send(&res)
 		if err != nil {
 			return err
@@ -142,7 +135,7 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_Subscribe
 	msgCenter := service.relayer.GetMsgCenter()
 
 	// get msg box
-	msgBox, err := msgCenter.GetBox(topicID)
+	msgBox, err := msgCenter.GetBox(req.GetTopicId())
 	if err != nil {
 		err := stream.Send(&res)
 		if err != nil {
