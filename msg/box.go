@@ -101,9 +101,8 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 				subLogger.Err(err).Msg("")
 				return
 			}
-			data := pubSubMsg.GetData()
 			msgCapsule := pb.MsgCapsule{}
-			err = proto.Unmarshal(data, &msgCapsule)
+			err = proto.Unmarshal(pubSubMsg.GetData(), &msgCapsule)
 			if err != nil {
 				subLogger.Err(err).Msg("")
 				continue
