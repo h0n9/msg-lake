@@ -94,6 +94,8 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 	return &publishRes, nil
 }
 func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
+	service.logger.Debug().Msg("begin of subscribe stream")
+	defer service.logger.Debug().Msg("end of subscribe stream")
 	// set subscribe res
 	res := pb.SubscribeRes{
 		Type:    pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK,
@@ -173,18 +175,20 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_Subscribe
 	res.Type = pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY
 
 	// relay msgs to susbscriber
-	for msgCapsule := range subscriberCh {
-		res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
-		err := stream.Send(&res)
-		if err != nil {
+	for {
+		select {
+		case <-stream.Context().Done():
 			err := msgBox.StopSubscription(subscriberID)
+			if err != nil {
+				return err
+			}
+			return nil
+		case msgCapsule := <-subscriberCh:
+			res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
+			err := stream.Send(&res)
 			if err != nil {
 				service.logger.Err(err).Msg("")
 			}
-			break
 		}
-		continue
 	}
-
-	return nil
 }
