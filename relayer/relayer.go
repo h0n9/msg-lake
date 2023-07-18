@@ -126,7 +126,16 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs 
 	subLogger.Info().Msgf("listening address %v", h.Addrs())
 	subLogger.Info().Msgf("libp2p peer ID %s", h.ID())
 
-	ps, err := pubsub.NewGossipSub(ctx, h)
+	// TODO: make this options customizable with external config file
+	ps, err := pubsub.NewGossipSub(
+		ctx,
+		h,
+		// msgs routing internally don't need to be signed and verified
+		pubsub.WithMessageSigning(false),
+		// msgs are removed from time cache after 3 seconds since first seen
+		pubsub.WithSeenMessagesTTL(3*time.Second),
+		pubsub.WithSeenMessagesStrategy(timecache.Strategy_FirstSeen),
+	)
 	if err != nil {
 		return nil, err
 	}
