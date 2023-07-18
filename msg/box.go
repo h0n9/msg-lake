@@ -47,7 +47,7 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 		setSubscriberCh:    make(setSubscriberCh),
 		deleteSubscriberCh: make(deleteSubscriberCh),
 
-		subscriberCh: make(SubscriberCh, 100),
+		subscriberCh: make(SubscriberCh, 10),
 		subscription: subscription,
 		subscribers:  make(map[string]SubscriberCh),
 	}
@@ -125,7 +125,7 @@ func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
 
 func (box *Box) Subscribe(subscriberID string) (SubscriberCh, error) {
 	var (
-		subscriberCh = make(SubscriberCh, 100)
+		subscriberCh = make(SubscriberCh, 10)
 		errCh        = make(chan error)
 	)
 	defer close(errCh)
