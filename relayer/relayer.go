@@ -2,10 +2,12 @@ package relayer
 
 import (
 	"context"
+	"time"
 
 	"github.com/libp2p/go-libp2p"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p-pubsub/timecache"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
@@ -51,7 +53,7 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs 
 	if err != nil {
 		return nil, err
 	}
-	if seed != nil && len(seed) > 0 {
+	if len(seed) > 0 {
 		privKey, err = crypto.GenPrivKeyFromSeed(seed)
 		if err != nil {
 			return nil, err
