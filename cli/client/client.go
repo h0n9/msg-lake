@@ -261,7 +261,7 @@ type Msg struct {
 }
 
 func init() {
-	r := rand.New(rand.NewSource(time.Now().Unix())).Int()
+	r := rand.New(rand.NewSource(time.Now().UnixMicro())).Int()
 
 	Cmd.Flags().BoolVarP(&tlsEnabled, "tls", "t", false, "enable tls connection")
 	Cmd.Flags().StringVar(&hostAddr, "host", "localhost:8080", "host addr")
