@@ -189,6 +189,7 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_Subscribe
 			if err != nil {
 				service.logger.Err(err).Msg("")
 			}
+			msgCapsule = nil // explicitly free
 		}
 	}
 }

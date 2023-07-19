@@ -64,10 +64,13 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 			select {
 			case msgCapsule = <-box.subscriberCh:
 				for subscriberID, subscriberCh := range box.subscribers {
-					subLogger.Debug().Str("subscriber-id", subscriberID).Msg("relaying")
-					subscriberCh <- msgCapsule
-					subLogger.Debug().Str("subscriber-id", subscriberID).Msg("relayed")
+					go func(id string, ch SubscriberCh, mc *pb.MsgCapsule) {
+						subLogger.Debug().Str("subscriber-id", id).Msg("relaying")
+						ch <- mc
+						subLogger.Debug().Str("subscriber-id", id).Msg("relayed")
+					}(subscriberID, subscriberCh, msgCapsule)
 				}
+				msgCapsule = nil // explicitly free
 			case setSubscriber = <-box.setSubscriberCh:
 				_, exist := box.subscribers[setSubscriber.subscriberID]
 				if exist {
