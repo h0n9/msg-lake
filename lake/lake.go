@@ -178,11 +178,14 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_Subscribe
 	for {
 		select {
 		case <-stream.Context().Done():
-			err := msgBox.StopSubscription(subscriberID)
+			size, err := msgBox.StopSubscription(subscriberID)
 			if err != nil {
 				return err
 			}
-			return nil
+			if size > 0 {
+				return nil
+			}
+			return msgCenter.LeaveBox(req.GetTopicId())
 		case msgCapsule := <-subscriberCh:
 			res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
 			err := stream.Send(&res)

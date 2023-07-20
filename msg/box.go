@@ -2,6 +2,7 @@ package msg
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -15,6 +16,8 @@ import (
 
 type Box struct {
 	ctx    context.Context
+	cancel context.CancelFunc
+
 	logger *zerolog.Logger
 	wg     sync.WaitGroup
 
@@ -30,14 +33,17 @@ type Box struct {
 	subscribers  map[string]SubscriberCh
 }
 
-func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, error) {
+func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, error) {
 	subLogger := logger.With().Str("module", "msg-box").Logger()
 	subscription, err := topic.Subscribe()
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := context.WithCancel(context.Background())
 	box := Box{
 		ctx:    ctx,
+		cancel: cancel,
+
 		logger: &subLogger,
 		wg:     sync.WaitGroup{},
 
@@ -62,6 +68,8 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 		)
 		for {
 			select {
+			case <-ctx.Done():
+				return
 			case msgCapsule = <-box.subscriberCh:
 				for subscriberID, subscriberCh := range box.subscribers {
 					go func(id string, ch SubscriberCh, mc *pb.MsgCapsule) {
@@ -99,21 +107,50 @@ func NewBox(ctx context.Context, logger *zerolog.Logger, topicID string, topic *
 		defer box.wg.Done()
 		defer subscription.Cancel()
 		for {
-			pubSubMsg, err := subscription.Next(ctx)
-			if err != nil {
-				subLogger.Err(err).Msg("")
+			select {
+			case <-ctx.Done():
 				return
+			default:
+				pubSubMsg, err := subscription.Next(ctx)
+				if err != nil {
+					if errors.Is(context.Canceled, err) {
+						return
+					}
+					subLogger.Err(err).Msg("")
+					return
+				}
+				msgCapsule := pb.MsgCapsule{}
+				err = proto.Unmarshal(pubSubMsg.GetData(), &msgCapsule)
+				if err != nil {
+					subLogger.Err(err).Msg("")
+					continue
+				}
+				box.subscriberCh <- &msgCapsule
 			}
-			msgCapsule := pb.MsgCapsule{}
-			err = proto.Unmarshal(pubSubMsg.GetData(), &msgCapsule)
-			if err != nil {
-				subLogger.Err(err).Msg("")
-				continue
-			}
-			box.subscriberCh <- &msgCapsule
 		}
 	}()
 	return &box, nil
+}
+
+func (box *Box) Close() error {
+	// cancel context
+	box.cancel()
+
+	// close channels
+	close(box.setSubscriberCh)
+	close(box.deleteSubscriberCh)
+	close(box.subscriberCh)
+
+	// clean up subscribers
+	for id := range box.subscribers {
+		delete(box.subscribers, id)
+	}
+
+	// cancel topic subscription
+	box.subscription.Cancel()
+
+	// close topic
+	return box.topic.Close()
 }
 
 func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
@@ -147,7 +184,7 @@ func (box *Box) Subscribe(subscriberID string) (SubscriberCh, error) {
 	return subscriberCh, nil
 }
 
-func (box *Box) StopSubscription(subscriberID string) error {
+func (box *Box) StopSubscription(subscriberID string) (int, error) {
 	var (
 		errCh = make(chan error)
 	)
@@ -158,5 +195,6 @@ func (box *Box) StopSubscription(subscriberID string) error {
 
 		errCh: errCh,
 	}
-	return <-errCh
+	err := <-errCh
+	return len(box.subscribers), err
 }
