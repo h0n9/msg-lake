@@ -20,7 +20,7 @@ const (
 	RandomSubscriberIDLen = 10
 )
 
-type LakeService struct {
+type Service struct {
 	pb.UnimplementedLakeServer
 
 	ctx     context.Context
@@ -28,100 +28,92 @@ type LakeService struct {
 	relayer *relayer.Relayer
 }
 
-func NewLakeService(ctx context.Context, logger *zerolog.Logger, seed []byte, relayerAddrs []string, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*LakeService, error) {
+func NewService(ctx context.Context, logger *zerolog.Logger, seed []byte, relayerAddrs []string, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Service, error) {
 	subLogger := logger.With().Str("module", "lake-service").Logger()
 	relayer, err := relayer.NewRelayer(ctx, logger, seed, relayerAddrs, mdnsEnabled, dhtEnabled, bootstrapPeers)
 	if err != nil {
 		return nil, err
 	}
 	go relayer.DiscoverPeers()
-	return &LakeService{
+	return &Service{
 		ctx:     ctx,
 		logger:  &subLogger,
 		relayer: relayer,
 	}, nil
 }
 
-func (lakeService *LakeService) Close() {
-	if lakeService.relayer != nil {
-		lakeService.relayer.Close()
+func (service *Service) Close() {
+	if service.relayer != nil {
+		service.relayer.Close()
 	}
-	lakeService.logger.Info().Msg("closed lake service")
+	service.logger.Info().Msg("closed lake service")
 }
 
-func (lakeService *LakeService) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
-	// get parameters
-	topicID := req.GetTopicId()
-	msgCapsule := req.GetMsgCapsule()
-	data := msgCapsule.GetData()
-	signature := msgCapsule.GetSignature()
-
+func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
 	// set publish res
 	publishRes := pb.PublishRes{
-		TopicId: topicID,
+		TopicId: req.GetTopicId(),
 		Ok:      false,
 	}
 
 	// check constraints
-	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
+	if !util.CheckStrLen(req.GetTopicId(), MinTopicIDLen, MaxTopicIDLen) {
 		return &publishRes, fmt.Errorf("failed to verify length of topic id")
 	}
-	pubKeyBytes := signature.GetPubKey()
-	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
+	pubKey, err := crypto.GenPubKeyFromBytes(req.GetMsgCapsule().GetSignature().GetPubKey())
 	if err != nil {
 		return &publishRes, err
 	}
-	if !pubKey.Verify(data, signature.GetData()) {
+	if !pubKey.Verify(
+		req.GetMsgCapsule().GetData(),
+		req.GetMsgCapsule().GetSignature().GetData(),
+	) {
 		return &publishRes, fmt.Errorf("failed to verify signed data")
 	}
 
 	// get msg center
-	msgCenter := lakeService.relayer.GetMsgCenter()
+	msgCenter := service.relayer.GetMsgCenter()
 
 	// get msg box
-	msgBox, err := msgCenter.GetBox(topicID)
+	msgBox, err := msgCenter.GetBox(req.GetTopicId())
 	if err != nil {
 		return &publishRes, err
 	}
 
 	// publish msg
-	err = msgBox.Publish(msgCapsule)
+	err = msgBox.Publish(req.GetMsgCapsule())
 	if err != nil {
 		return &publishRes, err
 	}
 
-	lakeService.logger.Debug().Str("addr", string(pubKey.Address())).Msg("published")
+	service.logger.Debug().Str("addr", string(pubKey.Address())).Msg("published")
 
 	// update publish res
 	publishRes.Ok = true
 
 	return &publishRes, nil
 }
-func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
-	// get parameters
-	topicID := req.GetTopicId()
-	msgCapsule := req.GetMsgCapsule()
-	data := msgCapsule.GetData()
-	signature := msgCapsule.GetSignature()
-
+func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
+	service.logger.Debug().Msg("begin of subscribe stream")
+	defer service.logger.Debug().Msg("end of subscribe stream")
 	// set subscribe res
 	res := pb.SubscribeRes{
 		Type:    pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK,
-		TopicId: topicID,
+		TopicId: req.GetTopicId(),
 		Res: &pb.SubscribeRes_Ok{
 			Ok: false,
 		},
 	}
 
 	// check constraints
-	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
+	if !util.CheckStrLen(req.GetTopicId(), MinTopicIDLen, MaxTopicIDLen) {
 		err := stream.Send(&res)
 		if err != nil {
 			return err
 		}
 		return nil
 	}
-	pubKeyBytes := signature.GetPubKey()
+	pubKeyBytes := req.MsgCapsule.GetSignature().GetPubKey()
 	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
 	if err != nil {
 		err := stream.Send(&res)
@@ -130,7 +122,10 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 		}
 		return nil
 	}
-	if !pubKey.Verify(data, signature.GetData()) {
+	if !pubKey.Verify(
+		req.GetMsgCapsule().GetData(),
+		req.GetMsgCapsule().GetSignature().GetData(),
+	) {
 		err := stream.Send(&res)
 		if err != nil {
 			return err
@@ -139,10 +134,10 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 	}
 
 	// get msg center
-	msgCenter := lakeService.relayer.GetMsgCenter()
+	msgCenter := service.relayer.GetMsgCenter()
 
 	// get msg box
-	msgBox, err := msgCenter.GetBox(topicID)
+	msgBox, err := msgCenter.GetBox(req.GetTopicId())
 	if err != nil {
 		err := stream.Send(&res)
 		if err != nil {
@@ -155,7 +150,7 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 	subscriberID := util.GenerateRandomBase64String(RandomSubscriberIDLen)
 
 	// register subscriber id to msg box
-	subscriberCh, err := msgBox.Subscribe(subscriberID)
+	subscriberCh, err := msgBox.JoinSub(subscriberID)
 	if err != nil {
 		err := stream.Send(&res)
 		if err != nil {
@@ -164,7 +159,7 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 		return nil
 	}
 
-	lakeService.logger.Debug().Str("subscriber-id", subscriberID).Msg("registered")
+	service.logger.Debug().Str("subscriber-id", subscriberID).Msg("registered")
 
 	// update subscriber res
 	res.SubscriberId = subscriberID
@@ -180,18 +175,25 @@ func (lakeService *LakeService) Subscribe(req *pb.SubscribeReq, stream pb.Lake_S
 	res.Type = pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY
 
 	// relay msgs to susbscriber
-	for msgCapsule := range subscriberCh {
-		res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
-		err := stream.Send(&res)
-		if err != nil {
-			err := msgBox.StopSubscription(subscriberID)
+	for {
+		select {
+		case <-stream.Context().Done():
+			subSize, err := msgBox.LeaveSub(subscriberID)
 			if err != nil {
-				lakeService.logger.Err(err).Msg("")
+				return err
 			}
-			break
+			if subSize > 0 {
+				return nil
+			}
+			msgBox.StopSub()
+			return nil
+		case msgCapsule := <-subscriberCh:
+			res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
+			err := stream.Send(&res)
+			if err != nil {
+				service.logger.Err(err).Msg("")
+			}
+			msgCapsule = nil // explicitly free
 		}
-		continue
 	}
-
-	return nil
 }
