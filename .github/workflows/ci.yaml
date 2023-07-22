@@ -15,6 +15,7 @@ env:
   img-repository: msg-lake
   img-tag: latest
   img-push: "false"
+  img-platforms: linux/amd64
 jobs:
   build-push:
     runs-on: ubuntu-22.04
@@ -41,11 +42,11 @@ jobs:
         run: |
           echo "img-tag=${GITHUB_REF_NAME}" >> $GITHUB_ENV
           echo "img-push=true" >> $GITHUB_ENV
+          echo "img-platforms=linux/amd64,linux/arm64"
       - name: Build Docker image
         uses: docker/build-push-action@v4
         with:
-          # platforms: linux/amd64,linux/arm64
-          platforms: linux/amd64
+          platforms: ${{ env.img-platforms }}
           push: ${{ env.img-push }}
           tags: ${{ env.img-registry }}/${{ env.img-repository }}:${{ env.img-tag }}
           cache-from: type=gha,scope=msg-lake
