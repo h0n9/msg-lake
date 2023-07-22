@@ -2,6 +2,7 @@ package msg
 
 import (
 	"context"
+	"fmt"
 
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/rs/zerolog"
@@ -33,7 +34,7 @@ func (center *Center) GetBox(topicID string) (*Box, error) {
 		if err != nil {
 			return nil, err
 		}
-		newBox, err := NewBox(center.ctx, center.logger, topicID, topic)
+		newBox, err := NewBox(center.logger, topicID, topic)
 		if err != nil {
 			return nil, err
 		}
@@ -41,4 +42,18 @@ func (center *Center) GetBox(topicID string) (*Box, error) {
 		center.boxes[topicID] = box
 	}
 	return box, nil
+}
+
+func (center *Center) LeaveBox(topicID string) error {
+	box, exist := center.boxes[topicID]
+	if !exist {
+		return fmt.Errorf("failed to find msg box with topic id '%s'", topicID)
+	}
+	err := box.Close()
+	if err != nil {
+		return err
+	}
+	delete(center.boxes, topicID)
+	center.logger.Debug().Str("topic-id", topicID).Msg("left")
+	return nil
 }

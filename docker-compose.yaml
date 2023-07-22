@@ -4,12 +4,19 @@ services:
   agent:
     build:
       context: .
-    image: h0n9/msg-lake
-    command: ["agent"]
+    image: ghcr.io/h0n9/msg-lake
+    command: ["agent", "--mdns"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]
     deploy:
       replicas: 3
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 256M
+        reservations:
+          cpus: "1.0"
+          memory: 256M
   nginx:
     depends_on:
       - agent
@@ -18,7 +25,7 @@ services:
     volumes:
       - ./misc/nginx.conf:/etc/nginx/conf.d/msg-lake.conf:ro
     ports:
-      - 8080-8089:8080
+      - 8080-8082:8080
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]
     deploy:
@@ -26,7 +33,7 @@ services:
   client:
     depends_on:
       - nginx
-    image: h0n9/msg-lake
+    image: ghcr.io/h0n9/msg-lake
     command: ["client", "--host", "nginx:8080"]
     deploy:
       replicas: 0

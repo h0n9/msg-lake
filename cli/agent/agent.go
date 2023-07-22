@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"fmt"
+	"math/big"
 	"net"
 	"os"
 
@@ -16,6 +19,19 @@ import (
 
 const (
 	DefaultGrpcListenAddr = "0.0.0.0:8080"
+	DefaultRelayerPortMin = 1024
+	DefaultRelayerPortMax = 49151
+)
+
+var (
+	grpcListenAddr string
+	relayerAddrs   []string
+	seed           string
+
+	mdnsEnabled bool
+	dhtEnabled  bool
+
+	bootstrapPeers []string
 )
 
 var Cmd = &cobra.Command{
@@ -35,7 +51,15 @@ var Cmd = &cobra.Command{
 
 		grpcServer := grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
-		lakeService, err := lake.NewLakeService(ctx, &logger)
+		lakeService, err := lake.NewService(
+			ctx,
+			&logger,
+			[]byte(seed),
+			relayerAddrs,
+			mdnsEnabled,
+			dhtEnabled,
+			bootstrapPeers,
+		)
 		if err != nil {
 			return err
 		}
@@ -44,11 +68,11 @@ var Cmd = &cobra.Command{
 		pb.RegisterLakeServer(grpcServer, lakeService)
 		logger.Info().Msg("registered lake service to gRPC server")
 
-		listener, err := net.Listen("tcp", DefaultGrpcListenAddr)
+		listener, err := net.Listen("tcp", grpcListenAddr)
 		if err != nil {
 			return err
 		}
-		logger.Info().Msgf("listening gRPC server on %s", DefaultGrpcListenAddr)
+		logger.Info().Msgf("listening gRPC server on %s", grpcListenAddr)
 
 		err = grpcServer.Serve(listener)
 		if err != nil {
@@ -57,4 +81,25 @@ var Cmd = &cobra.Command{
 
 		return nil
 	},
+}
+
+func init() {
+	n, err := rand.Int(
+		rand.Reader,
+		big.NewInt(DefaultRelayerPortMax-DefaultRelayerPortMin),
+	)
+	if err != nil {
+		panic(err)
+	}
+	randomRelayerPort := int(n.Int64()) + DefaultRelayerPortMin
+
+	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
+	Cmd.Flags().StringSliceVar(&relayerAddrs, "addrs", []string{
+		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic", randomRelayerPort),
+		fmt.Sprintf("/ip6/::/udp/%d/quic", randomRelayerPort),
+	}, "relayer port")
+	Cmd.Flags().StringVar(&seed, "seed", "", "private key seed")
+	Cmd.Flags().BoolVar(&mdnsEnabled, "mdns", false, "enable mdns service")
+	Cmd.Flags().BoolVar(&dhtEnabled, "dht", false, "enable kad dht")
+	Cmd.Flags().StringSliceVar(&bootstrapPeers, "peers", []string{}, "bootstrap peers for kad dht")
 }

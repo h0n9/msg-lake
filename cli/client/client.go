@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -20,7 +21,6 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/postie-labs/go-postie-lib/crypto"
 
@@ -86,8 +86,27 @@ var Cmd = &cobra.Command{
 		}
 		cli := pb.NewLakeClient(conn)
 
+		msg := Msg{
+			Data: []byte(topicID),
+		}
+		data, err := json.Marshal(msg)
+		if err != nil {
+			return err
+		}
+		sigDataBytes, err := privKey.Sign(data)
+		if err != nil {
+			return err
+		}
+
 		stream, err := cli.Subscribe(ctx, &pb.SubscribeReq{
 			TopicId: topicID,
+			MsgCapsule: &pb.MsgCapsule{
+				Data: data,
+				Signature: &pb.Signature{
+					PubKey: pubKeyBytes,
+					Data:   sigDataBytes,
+				},
+			},
 		})
 		if err != nil {
 			return err
@@ -112,31 +131,32 @@ var Cmd = &cobra.Command{
 		go func() {
 			defer wg.Done()
 			for {
-				msg, err := stream.Recv()
+				res, err := stream.Recv()
 				if err != nil {
 					fmt.Println(err)
 					sigCh <- syscall.SIGINT
 					break
 				}
-				if msg.GetType() != pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY {
+				if res.GetType() != pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY {
 					continue
 				}
-				data := msg.GetData()
-				if len(data) == 0 {
-					continue
-				}
-				msgCapsule := pb.MsgCapsule{}
-				err = proto.Unmarshal(data, &msgCapsule)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-
+				msgCapsule := res.GetMsgCapsule()
 				signature := msgCapsule.GetSignature()
 				if bytes.Equal(signature.GetPubKey(), pubKeyBytes) {
 					continue
 				}
-				printOutput(true, msgCapsule.GetMsg())
+				data := msgCapsule.GetData()
+				if len(data) == 0 {
+					continue
+				}
+				timestamp := msgCapsule.GetTimestamp()
+				msg := Msg{}
+				err = json.Unmarshal(data, &msg)
+				if err != nil {
+					fmt.Println(err)
+					continue
+				}
+				printOutput(true, &msg, timestamp)
 				printInput(true)
 			}
 		}()
@@ -158,55 +178,52 @@ var Cmd = &cobra.Command{
 				if input == "" {
 					continue
 				}
-				msg := &pb.Msg{
-					Data: []byte(input),
-					Metadata: map[string][]byte{
-						"nickname": []byte(nickname),
-					},
-				}
-				data, err := proto.Marshal(msg)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-				sigBytes, err := privKey.Sign(data)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-				msgCapsule := pb.MsgCapsule{
-					Msg: msg,
-					Signature: &pb.Signature{
-						PubKey:   pubKeyBytes,
-						SigBytes: sigBytes,
-					},
-				}
-				data, err = proto.Marshal(&msgCapsule)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-
-				pubRes, err := cli.Publish(ctx, &pb.PublishReq{
-					TopicId: topicID,
-					Data:    data,
-				})
-				if err == io.EOF {
-					err := stream.CloseSend()
+				go func() {
+					msg := Msg{
+						Data: []byte(input),
+						Metadata: map[string][]byte{
+							"nickname": []byte(nickname),
+						},
+					}
+					data, err := json.Marshal(msg)
 					if err != nil {
 						fmt.Println(err)
+						return
 					}
-				}
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
+					sigDataBytes, err := privKey.Sign(data)
+					if err != nil {
+						fmt.Println(err)
+						return
+					}
 
-				// check publish res
-				if !pubRes.GetOk() {
-					fmt.Println("failed to send message")
-					continue
-				}
+					pubRes, err := cli.Publish(ctx, &pb.PublishReq{
+						TopicId: topicID,
+						MsgCapsule: &pb.MsgCapsule{
+							Data: data,
+							Signature: &pb.Signature{
+								PubKey: pubKeyBytes,
+								Data:   sigDataBytes,
+							},
+						},
+					})
+					if err == io.EOF {
+						err := stream.CloseSend()
+						if err != nil {
+							fmt.Println(err)
+							cancel()
+						}
+					}
+					if err != nil {
+						fmt.Println(err)
+						return
+					}
+
+					// check publish res
+					if !pubRes.GetOk() {
+						fmt.Println("failed to send message")
+						return
+					}
+				}()
 			}
 		}()
 
@@ -224,22 +241,27 @@ func printInput(newline bool) {
 	fmt.Printf(s, nickname)
 }
 
-func printOutput(newline bool, msg *pb.Msg) {
-	s := "📩 <%s> %s"
+func printOutput(newline bool, msg *Msg, timestamp int64) {
+	s := "📩 <%s> [%d] %s"
 	if newline {
 		s = "\r\n" + s
 	}
 	nickname := "unknown"
-	metadata := msg.GetMetadata()
+	metadata := msg.Metadata
 	value, exist := metadata["nickname"]
 	if exist {
 		nickname = string(value)
 	}
-	fmt.Printf(s, nickname, msg.GetData())
+	fmt.Printf(s, nickname, timestamp, msg.Data)
+}
+
+type Msg struct {
+	Data     []byte            `json:"data"`
+	Metadata map[string][]byte `json:"metadata"`
 }
 
 func init() {
-	r := rand.New(rand.NewSource(time.Now().Unix())).Int()
+	r := rand.New(rand.NewSource(time.Now().UnixMicro())).Int()
 
 	Cmd.Flags().BoolVarP(&tlsEnabled, "tls", "t", false, "enable tls connection")
 	Cmd.Flags().StringVar(&hostAddr, "host", "localhost:8080", "host addr")
