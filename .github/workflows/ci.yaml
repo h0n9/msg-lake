@@ -42,7 +42,7 @@ jobs:
         run: |
           echo "img-tags=${{ env.img-registry }}/${{ env.img-repository }}:${GITHUB_REF_NAME},${{ env.img-registry }}/${{ env.img-repository }}:latest" >> $GITHUB_ENV
           echo "img-push=true" >> $GITHUB_ENV
-          echo "img-platforms=linux/amd64,linux/arm64" >> ${GITHUB_SHA::6}
+          echo "img-platforms=linux/amd64,linux/arm64" >> $GITHUB_ENV
       - name: Build Docker image
         uses: docker/build-push-action@v4
         with:
