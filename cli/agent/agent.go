@@ -67,9 +67,11 @@ var Cmd = &cobra.Command{
 			cancel()
 			if grpcServer != nil {
 				grpcServer.GracefulStop()
+				logger.Info().Msg("gracefully stopped gRPC server")
 			}
 			if lakeService != nil {
 				lakeService.Close()
+				logger.Info().Msg("closed lake service")
 			}
 			wg.Done()
 		}()
