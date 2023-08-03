@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,10 +13,17 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	pb "github.com/h0n9/msg-lake/proto"
+	"github.com/h0n9/msg-lake/util"
 )
 
 const (
-	ChanBufferSize = 1000
+	DefaultInternalChanBufferSize = 5000
+	DefaultExternalChanBufferSize = 1000
+)
+
+var (
+	internalChanBufferSize int
+	externalChanBufferSize int
 )
 
 type Box struct {
@@ -56,7 +64,7 @@ func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, 
 		setSubscriberCh:    make(setSubscriberCh),
 		deleteSubscriberCh: make(deleteSubscriberCh),
 
-		subCh:     make(SubscriberCh, 5000),
+		subCh:     make(SubscriberCh, internalChanBufferSize),
 		sub:       nil,
 		subCtx:    nil,
 		subCancel: nil,
@@ -209,7 +217,7 @@ func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
 
 func (box *Box) JoinSub(subscriberID string) (SubscriberCh, error) {
 	var (
-		subscriberCh = make(SubscriberCh, ChanBufferSize)
+		subscriberCh = make(SubscriberCh, externalChanBufferSize)
 		errCh        = make(chan error)
 	)
 	defer close(errCh)
@@ -245,4 +253,24 @@ func (box *Box) LeaveSub(subscriberID string) error {
 		return err
 	}
 	return nil
+}
+
+func init() {
+	tmp, err := getEnvInt("INTERNAL_CHAN_BUFFER_SIZE", DefaultInternalChanBufferSize)
+	if err != nil {
+		panic(err)
+	}
+	internalChanBufferSize = tmp
+
+	tmp, err = getEnvInt("EXTERNAL_CHAN_BUFFER_SIZE", DefaultExternalChanBufferSize)
+	if err != nil {
+		panic(err)
+	}
+	externalChanBufferSize = tmp
+}
+
+func getEnvInt(key string, fallback int) (int, error) {
+	tmpStr := strconv.Itoa(fallback)
+	tmpStr = util.GetEnv(key, tmpStr)
+	return strconv.Atoi(tmpStr)
 }
