@@ -52,7 +52,10 @@ var Cmd = &cobra.Command{
 		ctx, cancel := context.WithCancel(context.Background())
 		logger.Info().Msg("initalized context")
 
-		var grpcServer *grpc.Server = nil
+		var (
+			lakeService *lake.Service = nil
+			grpcServer  *grpc.Server  = nil
+		)
 
 		sigCh := make(chan os.Signal, 1)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
@@ -65,13 +68,16 @@ var Cmd = &cobra.Command{
 			if grpcServer != nil {
 				grpcServer.GracefulStop()
 			}
+			if lakeService != nil {
+				lakeService.Close()
+			}
 			wg.Done()
 		}()
 		logger.Info().Msg("listening os signal: SIGINT, SIGTERM")
 
 		grpcServer = grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
-		lakeService, err := lake.NewService(
+		lakeService, err = lake.NewService(
 			ctx,
 			&logger,
 			[]byte(seed),
