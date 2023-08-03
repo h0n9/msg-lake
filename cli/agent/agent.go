@@ -7,6 +7,9 @@ import (
 	"math/big"
 	"net"
 	"os"
+	"os/signal"
+	"sync"
+	"syscall"
 
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
@@ -46,10 +49,27 @@ var Cmd = &cobra.Command{
 		zerolog.SetGlobalLevel(logLevel)
 		logger.Info().Msg("initalized logger")
 
-		ctx := context.Background()
+		ctx, cancel := context.WithCancel(context.Background())
 		logger.Info().Msg("initalized context")
 
-		grpcServer := grpc.NewServer()
+		var grpcServer *grpc.Server = nil
+
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		wg := sync.WaitGroup{}
+		wg.Add(1)
+		go func() {
+			s := <-sigCh
+			logger.Info().Msgf("got signal %v, attempting graceful shutdown", s)
+			cancel()
+			if grpcServer != nil {
+				grpcServer.GracefulStop()
+			}
+			wg.Done()
+		}()
+		logger.Info().Msg("listening os signal: SIGINT, SIGTERM")
+
+		grpcServer = grpc.NewServer()
 		logger.Info().Msg("initalized gRPC server")
 		lakeService, err := lake.NewService(
 			ctx,
@@ -78,6 +98,8 @@ var Cmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+
+		wg.Wait()
 
 		return nil
 	},
