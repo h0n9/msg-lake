@@ -56,16 +56,20 @@ var Cmd = &cobra.Command{
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sig := <-sigCh
-			fmt.Println("\r\ngot", sig.String())
-			if conn != nil {
-				fmt.Printf("closing grpc client ... ")
-				conn.Close()
+			select {
+			case <-ctx.Done():
+				return
+			case s := <-sigCh:
+				fmt.Printf("got signal %v, attempting graceful shutdown\n", s)
+				if conn != nil {
+					fmt.Printf("closing grpc client ... ")
+					conn.Close()
+					fmt.Printf("done\n")
+				}
+				fmt.Printf("cancelling ctx ... ")
+				cancel()
 				fmt.Printf("done\n")
 			}
-			fmt.Printf("cancelling ctx ... ")
-			cancel()
-			fmt.Printf("done\n")
 		}()
 
 		// init privKey
@@ -134,8 +138,8 @@ var Cmd = &cobra.Command{
 				res, err := stream.Recv()
 				if err != nil {
 					fmt.Println(err)
-					sigCh <- syscall.SIGINT
-					break
+					cancel()
+					return
 				}
 				if res.GetType() != pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY {
 					continue
@@ -157,13 +161,16 @@ var Cmd = &cobra.Command{
 					continue
 				}
 				printOutput(true, &msg, timestamp)
-				printInput(true)
+				// printInput(true)
 			}
 		}()
 
 		// execute goroutine (sender)
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			reader := bufio.NewReader(os.Stdin)
+			ok := true
 			for {
 				printInput(false)
 				input, err := reader.ReadString('\n')
@@ -177,6 +184,10 @@ var Cmd = &cobra.Command{
 				input = strings.TrimSuffix(input, "\n")
 				if input == "" {
 					continue
+				}
+				if !ok {
+					cancel()
+					return
 				}
 				go func() {
 					msg := Msg{
@@ -206,15 +217,9 @@ var Cmd = &cobra.Command{
 							},
 						},
 					})
-					if err == io.EOF {
-						err := stream.CloseSend()
-						if err != nil {
-							fmt.Println(err)
-							cancel()
-						}
-					}
 					if err != nil {
 						fmt.Println(err)
+						ok = false
 						return
 					}
 
