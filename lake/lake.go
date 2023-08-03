@@ -3,6 +3,7 @@ package lake
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"github.com/rs/zerolog"
 
@@ -86,7 +87,10 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 		return &publishRes, err
 	}
 
-	service.logger.Debug().Str("addr", string(pubKey.Address())).Msg("published")
+	service.logger.Debug().
+		Str("topic-id", req.GetTopicId()).
+		Str("addr", string(pubKey.Address())).
+		Msg("published")
 
 	// update publish res
 	publishRes.Ok = true
@@ -94,8 +98,13 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 	return &publishRes, nil
 }
 func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
-	service.logger.Debug().Msg("begin of subscribe stream")
-	defer service.logger.Debug().Msg("end of subscribe stream")
+	service.logger.Debug().
+		Str("topic-id", req.GetTopicId()).
+		Msg("begin of subscribe stream")
+	defer service.logger.Debug().
+		Str("topic-id", req.GetTopicId()).
+		Msg("end of subscribe stream")
+
 	// set subscribe res
 	res := pb.SubscribeRes{
 		Type:    pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK,
@@ -159,7 +168,10 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_Subscribe
 		return nil
 	}
 
-	service.logger.Debug().Str("subscriber-id", subscriberID).Msg("registered")
+	service.logger.Info().
+		Str("topic-id", req.GetTopicId()).
+		Str("subscriber-id", subscriberID).
+		Msg("joined subscriber")
 
 	// update subscriber res
 	res.SubscriberId = subscriberID
@@ -171,29 +183,53 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_Subscribe
 		return err
 	}
 
-	// update subscriber res
-	res.Type = pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY
+	wg := sync.WaitGroup{}
 
-	// relay msgs to susbscriber
-	for {
-		select {
-		case <-stream.Context().Done():
-			subSize, err := msgBox.LeaveSub(subscriberID)
-			if err != nil {
-				return err
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stream.Context().Done():
+				return
+			case msgCapsule := <-subscriberCh:
+				err := stream.Send(&pb.SubscribeRes{
+					Type: pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY,
+					Res: &pb.SubscribeRes_MsgCapsule{
+						MsgCapsule: msgCapsule,
+					},
+				})
+				if err != nil {
+					return
+				}
+				msgCapsule = nil // explicitly free
 			}
-			if subSize > 0 {
-				return nil
-			}
-			msgBox.StopSub()
-			return nil
-		case msgCapsule := <-subscriberCh:
-			res.Res = &pb.SubscribeRes_MsgCapsule{MsgCapsule: msgCapsule}
-			err := stream.Send(&res)
-			if err != nil {
-				service.logger.Err(err).Msg("")
-			}
-			msgCapsule = nil // explicitly free
 		}
+	}()
+
+	wg.Wait()
+
+	go func() {
+		for len(subscriberCh) > 0 {
+			<-subscriberCh
+		}
+		service.logger.Debug().
+			Str("topic-id", req.GetTopicId()).
+			Str("subscriber-id", subscriberID).
+			Msg("drained subscriber ch")
+	}()
+
+	err = msgBox.LeaveSub(subscriberID)
+	if err != nil {
+		service.logger.Err(err).
+			Str("topic-id", req.GetTopicId()).
+			Str("subscriber-id", subscriberID).
+			Msg("")
 	}
+	service.logger.Info().
+		Str("topic-id", req.GetTopicId()).
+		Str("subscriber-id", subscriberID).
+		Msg("left subscriber")
+
+	return nil
 }
