@@ -161,7 +161,7 @@ var Cmd = &cobra.Command{
 					continue
 				}
 				printOutput(true, &msg, timestamp)
-				// printInput(true)
+				printInput(true)
 			}
 		}()
 
