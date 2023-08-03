@@ -14,6 +14,10 @@ import (
 	pb "github.com/h0n9/msg-lake/proto"
 )
 
+const (
+	ChanBufferSize = 1000
+)
+
 type Box struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -52,7 +56,7 @@ func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, 
 		setSubscriberCh:    make(setSubscriberCh),
 		deleteSubscriberCh: make(deleteSubscriberCh),
 
-		subCh:     make(SubscriberCh, 10),
+		subCh:     make(SubscriberCh, 5000),
 		sub:       nil,
 		subCtx:    nil,
 		subCancel: nil,
@@ -61,24 +65,16 @@ func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, 
 	}
 
 	go func() {
-		var (
-			msgCapsule *pb.MsgCapsule
-
-			setSubscriber    setSubscriber
-			deleteSubscriber deleteSubscriber
-		)
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case msgCapsule = <-box.subCh:
-				for subscriberID, subscriberCh := range box.subscribers {
-					subLogger.Debug().Str("subscriber-id", subscriberID).Msg("relaying")
+			case msgCapsule := <-box.subCh:
+				for _, subscriberCh := range box.subscribers {
 					subscriberCh <- msgCapsule
-					subLogger.Debug().Str("subscriber-id", subscriberID).Msg("relayed")
 				}
 				msgCapsule = nil // explicitly free
-			case setSubscriber = <-box.setSubscriberCh:
+			case setSubscriber := <-box.setSubscriberCh:
 				_, exist := box.subscribers[setSubscriber.subscriberID]
 				if exist {
 					setSubscriber.errCh <- fmt.Errorf("%s is already subscribing", setSubscriber.subscriberID)
@@ -89,16 +85,29 @@ func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, 
 					go box.startSub()
 				}
 				setSubscriber.errCh <- nil
-			case deleteSubscriber = <-box.deleteSubscriberCh:
+			case deleteSubscriber := <-box.deleteSubscriberCh:
 				subscriberCh, exist := box.subscribers[deleteSubscriber.subscriberID]
 				if !exist {
 					deleteSubscriber.errCh <- fmt.Errorf("%s is not subscribing", <-deleteSubscriber.errCh)
 					continue
 				}
 				close(subscriberCh)
-				subLogger.Debug().Str("subscriber-id", deleteSubscriber.subscriberID).Msg("closed channel")
+				subLogger.Debug().
+					Str("topic-id", topicID).
+					Str("subscriber-id", deleteSubscriber.subscriberID).
+					Msg("closed channel")
 				delete(box.subscribers, deleteSubscriber.subscriberID)
-				subLogger.Debug().Str("subscriber-id", deleteSubscriber.subscriberID).Msg("deleted channel")
+				subLogger.Debug().
+					Str("topic-id", topicID).
+					Str("subscriber-id", deleteSubscriber.subscriberID).
+					Msg("deleted channel")
+				box.logger.Debug().
+					Str("topic-id", box.topicID).
+					Int("num-of-subscribers", len(box.subscribers)).
+					Msg("")
+				if len(box.subscribers) == 0 {
+					box.StopSub()
+				}
 				deleteSubscriber.errCh <- nil
 			}
 		}
@@ -117,32 +126,54 @@ func (box *Box) startSub() {
 	box.subCtx = ctx
 	box.subCancel = cancel
 	box.sub = sub
-	box.logger.Debug().Str("topic-id", box.topicID).Msg("started subscription")
-	for {
-		pubSubMsg, err := box.sub.Next(box.subCtx)
-		if err != nil {
-			if errors.Is(context.Canceled, err) {
-				sub.Cancel()
-				box.subCtx = nil
-				box.subCancel = nil
-				box.sub = nil
-				box.logger.Debug().Str("topic-id", box.topicID).Msg("stopped subscription")
+	box.logger.Info().
+		Str("topic-id", box.topicID).
+		Msg("started subscription")
+
+	wg := sync.WaitGroup{}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-ctx.Done():
 				return
+			default:
+				pubSubMsg, err := box.sub.Next(box.subCtx)
+				if err != nil {
+					if errors.Is(context.Canceled, err) {
+						return
+					}
+					box.logger.Err(err).Msg("")
+					continue
+				}
+				msgCapsule := pb.MsgCapsule{}
+				err = proto.Unmarshal(pubSubMsg.GetData(), &msgCapsule)
+				if err != nil {
+					box.logger.Err(err).Msg("")
+					continue
+				}
+				box.subCh <- &msgCapsule
 			}
-			box.logger.Err(err).Msg("")
-			continue
 		}
-		msgCapsule := pb.MsgCapsule{}
-		err = proto.Unmarshal(pubSubMsg.GetData(), &msgCapsule)
-		if err != nil {
-			box.logger.Err(err).Msg("")
-			continue
-		}
-		box.subCh <- &msgCapsule
-	}
+	}()
+
+	wg.Wait()
+
+	sub.Cancel()
+	box.subCtx = nil
+	box.subCancel = nil
+	box.sub = nil
+	box.logger.Info().
+		Str("topic-id", box.topicID).
+		Msg("stopped subscription")
 }
 
 func (box *Box) StopSub() {
+	if box.subCancel == nil {
+		return
+	}
 	box.subCancel()
 }
 
@@ -178,7 +209,7 @@ func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
 
 func (box *Box) JoinSub(subscriberID string) (SubscriberCh, error) {
 	var (
-		subscriberCh = make(SubscriberCh, 10)
+		subscriberCh = make(SubscriberCh, ChanBufferSize)
 		errCh        = make(chan error)
 	)
 	defer close(errCh)
@@ -198,7 +229,7 @@ func (box *Box) JoinSub(subscriberID string) (SubscriberCh, error) {
 	return subscriberCh, nil
 }
 
-func (box *Box) LeaveSub(subscriberID string) (int, error) {
+func (box *Box) LeaveSub(subscriberID string) error {
 	var (
 		errCh = make(chan error)
 	)
@@ -210,5 +241,8 @@ func (box *Box) LeaveSub(subscriberID string) (int, error) {
 		errCh: errCh,
 	}
 	err := <-errCh
-	return len(box.subscribers), err
+	if err != nil {
+		return err
+	}
+	return nil
 }
