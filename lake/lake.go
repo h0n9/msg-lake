@@ -47,7 +47,6 @@ func (service *Service) Close() {
 	if service.relayer != nil {
 		service.relayer.Close()
 	}
-	service.logger.Info().Msg("closed lake service")
 }
 
 func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
