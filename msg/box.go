@@ -79,6 +79,10 @@ func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, 
 				return
 			case msgCapsule := <-box.subCh:
 				for _, subscriberCh := range box.subscribers {
+					if len(subscriberCh) == externalChanBufferSize {
+						// when subscriberCh is full, just skip this time
+						continue
+					}
 					subscriberCh <- msgCapsule
 				}
 				msgCapsule = nil // explicitly free
