@@ -170,7 +170,6 @@ var Cmd = &cobra.Command{
 		go func() {
 			defer wg.Done()
 			reader := bufio.NewReader(os.Stdin)
-			ok := true
 			for {
 				select {
 				case <-ctx.Done():
@@ -188,10 +187,6 @@ var Cmd = &cobra.Command{
 					input = strings.TrimSuffix(input, "\n")
 					if input == "" {
 						continue
-					}
-					if !ok {
-						cancel()
-						return
 					}
 					go func() {
 						msg := Msg{
@@ -223,7 +218,6 @@ var Cmd = &cobra.Command{
 						})
 						if err != nil {
 							fmt.Println(err)
-							ok = false
 							return
 						}
 
