@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"os"
+	"strconv"
 )
 
 func CheckStrLen(target string, min, max int) bool {
@@ -20,12 +21,26 @@ func GenerateRandomBase64String(size int) string {
 	return base64.RawStdEncoding.EncodeToString(bytes)
 }
 
-func GetEnv(key, fallback string) string {
+func getEnv(key, fallback string) string {
 	value, ok := os.LookupEnv(key)
 	if !ok {
 		return fallback
 	}
 	return value
+}
+
+func GetEnv(key, fallback string) string {
+	return getEnv(key, fallback)
+}
+
+func getEnvInt(key string, fallback int) (int, error) {
+	tmpStr := strconv.Itoa(fallback)
+	tmpStr = getEnv(key, tmpStr)
+	return strconv.Atoi(tmpStr)
+}
+
+func GetEnvInt(key string, fallback int) (int, error) {
+	return getEnvInt(key, fallback)
 }
 
 func GetLogLevel() string {

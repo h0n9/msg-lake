@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -256,21 +255,15 @@ func (box *Box) LeaveSub(subscriberID string) error {
 }
 
 func init() {
-	tmp, err := getEnvInt("INTERNAL_CHAN_BUFFER_SIZE", DefaultInternalChanBufferSize)
+	tmp, err := util.GetEnvInt("INTERNAL_CHAN_BUFFER_SIZE", DefaultInternalChanBufferSize)
 	if err != nil {
 		panic(err)
 	}
 	internalChanBufferSize = tmp
 
-	tmp, err = getEnvInt("EXTERNAL_CHAN_BUFFER_SIZE", DefaultExternalChanBufferSize)
+	tmp, err = util.GetEnvInt("EXTERNAL_CHAN_BUFFER_SIZE", DefaultExternalChanBufferSize)
 	if err != nil {
 		panic(err)
 	}
 	externalChanBufferSize = tmp
-}
-
-func getEnvInt(key string, fallback int) (int, error) {
-	tmpStr := strconv.Itoa(fallback)
-	tmpStr = util.GetEnv(key, tmpStr)
-	return strconv.Atoi(tmpStr)
 }
