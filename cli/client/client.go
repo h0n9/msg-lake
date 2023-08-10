@@ -170,65 +170,64 @@ var Cmd = &cobra.Command{
 		go func() {
 			defer wg.Done()
 			reader := bufio.NewReader(os.Stdin)
-			ok := true
 			for {
-				printInput(false)
-				input, err := reader.ReadString('\n')
-				if err == io.EOF {
+				select {
+				case <-ctx.Done():
 					return
-				}
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-				input = strings.TrimSuffix(input, "\n")
-				if input == "" {
-					continue
-				}
-				if !ok {
-					cancel()
-					return
-				}
-				go func() {
-					msg := Msg{
-						Data: []byte(input),
-						Metadata: map[string][]byte{
-							"nickname": []byte(nickname),
-						},
-					}
-					data, err := json.Marshal(msg)
-					if err != nil {
-						fmt.Println(err)
+				default:
+					printInput(false)
+					input, err := reader.ReadString('\n')
+					if err == io.EOF {
 						return
 					}
-					sigDataBytes, err := privKey.Sign(data)
 					if err != nil {
 						fmt.Println(err)
-						return
+						continue
 					}
-
-					pubRes, err := cli.Publish(ctx, &pb.PublishReq{
-						TopicId: topicID,
-						MsgCapsule: &pb.MsgCapsule{
-							Data: data,
-							Signature: &pb.Signature{
-								PubKey: pubKeyBytes,
-								Data:   sigDataBytes,
+					input = strings.TrimSuffix(input, "\n")
+					if input == "" {
+						continue
+					}
+					go func() {
+						msg := Msg{
+							Data: []byte(input),
+							Metadata: map[string][]byte{
+								"nickname": []byte(nickname),
 							},
-						},
-					})
-					if err != nil {
-						fmt.Println(err)
-						ok = false
-						return
-					}
+						}
+						data, err := json.Marshal(msg)
+						if err != nil {
+							fmt.Println(err)
+							return
+						}
+						sigDataBytes, err := privKey.Sign(data)
+						if err != nil {
+							fmt.Println(err)
+							return
+						}
 
-					// check publish res
-					if !pubRes.GetOk() {
-						fmt.Println("failed to send message")
-						return
-					}
-				}()
+						pubRes, err := cli.Publish(ctx, &pb.PublishReq{
+							TopicId: topicID,
+							MsgCapsule: &pb.MsgCapsule{
+								Data: data,
+								Signature: &pb.Signature{
+									PubKey: pubKeyBytes,
+									Data:   sigDataBytes,
+								},
+							},
+						})
+						if err != nil {
+							fmt.Println(err)
+							return
+						}
+
+						// check publish res
+						if !pubRes.GetOk() {
+							fmt.Println("failed to send message")
+							return
+						}
+					}()
+				}
 			}
 		}()
 
