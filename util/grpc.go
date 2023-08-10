@@ -8,7 +8,7 @@ import (
 )
 
 const (
-	DefaultUnaryServerInterceptorRateLimit = 100
+	DefaultUnaryServerInterceptorRateLimit = 10000
 )
 
 var (
