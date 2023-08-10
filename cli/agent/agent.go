@@ -77,7 +77,9 @@ var Cmd = &cobra.Command{
 		}()
 		logger.Info().Msg("listening os signal: SIGINT, SIGTERM")
 
-		grpcServer = grpc.NewServer()
+		grpcServer = grpc.NewServer(
+			grpc.UnaryInterceptor(util.UnaryServerInterceptor()),
+		)
 		logger.Info().Msg("initalized gRPC server")
 		lakeService, err = lake.NewService(
 			ctx,
