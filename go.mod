@@ -7,7 +7,7 @@ require (
 	github.com/libp2p/go-libp2p-kad-dht v0.25.1
 	github.com/libp2p/go-libp2p-pubsub v0.10.0
 	github.com/multiformats/go-multiaddr v0.12.0
-	github.com/postie-labs/go-postie-lib v0.0.5
+	github.com/postie-labs/go-postie-lib v0.0.7
 	github.com/rs/zerolog v1.29.1
 	github.com/spf13/cobra v1.7.0
 	github.com/stretchr/testify v1.8.4
