@@ -127,8 +127,8 @@ func init() {
 
 	Cmd.Flags().StringVar(&grpcListenAddr, "grpc", DefaultGrpcListenAddr, "gRPC listen address")
 	Cmd.Flags().StringSliceVar(&relayerAddrs, "addrs", []string{
-		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic", randomRelayerPort),
-		fmt.Sprintf("/ip6/::/udp/%d/quic", randomRelayerPort),
+		fmt.Sprintf("/ip4/0.0.0.0/udp/%d/quic-v1", randomRelayerPort),
+		fmt.Sprintf("/ip6/::/udp/%d/quic-v1", randomRelayerPort),
 	}, "relayer port")
 	Cmd.Flags().StringVar(&seed, "seed", "", "private key seed")
 	Cmd.Flags().BoolVar(&mdnsEnabled, "mdns", false, "enable mdns service")
