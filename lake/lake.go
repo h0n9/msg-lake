@@ -88,7 +88,7 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 
 	service.logger.Debug().
 		Str("topic-id", req.GetTopicId()).
-		Str("addr", string(pubKey.Address())).
+		Str("addr", pubKey.Address().String()).
 		Msg("published")
 
 	// update publish res
