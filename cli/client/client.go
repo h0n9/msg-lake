@@ -149,18 +149,10 @@ var Cmd = &cobra.Command{
 				if bytes.Equal(signature.GetPubKey(), pubKeyBytes) {
 					continue
 				}
-				data := msgCapsule.GetData()
-				if len(data) == 0 {
+				if len(msgCapsule.GetData()) == 0 {
 					continue
 				}
-				timestamp := msgCapsule.GetTimestamp()
-				msg := Msg{}
-				err = json.Unmarshal(data, &msg)
-				if err != nil {
-					fmt.Println(err)
-					continue
-				}
-				printOutput(true, &msg, timestamp)
+				printOutput(true, msgCapsule)
 				printInput(true)
 			}
 		}()
@@ -189,13 +181,7 @@ var Cmd = &cobra.Command{
 						continue
 					}
 					go func() {
-						msg := Msg{
-							Data: []byte(input),
-							Metadata: map[string][]byte{
-								"nickname": []byte(nickname),
-							},
-						}
-						data, err := json.Marshal(msg)
+						data, err := json.Marshal(input)
 						if err != nil {
 							fmt.Println(err)
 							return
@@ -242,21 +228,20 @@ func printInput(newline bool) {
 	if newline {
 		s = "\r\n" + s
 	}
-	fmt.Printf(s, nickname)
+	fmt.Printf(s, "me")
 }
 
-func printOutput(newline bool, msg *Msg, timestamp int64) {
+func printOutput(newline bool, msgCapsule *pb.MsgCapsule) {
 	s := "📩 <%s> [%d] %s"
 	if newline {
 		s = "\r\n" + s
 	}
-	nickname := "unknown"
-	metadata := msg.Metadata
-	value, exist := metadata["nickname"]
-	if exist {
-		nickname = string(value)
-	}
-	fmt.Printf(s, nickname, timestamp, msg.Data)
+	fmt.Printf(
+		s,
+		string(msgCapsule.GetSignature().GetPubKey()),
+		msgCapsule.GetTimestamp(),
+		msgCapsule.GetData(),
+	)
 }
 
 type Msg struct {
