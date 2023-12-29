@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 
 	"github.com/h0n9/msg-lake/lake"
 	pb "github.com/h0n9/msg-lake/proto"
@@ -103,6 +104,8 @@ var Cmd = &cobra.Command{
 			return err
 		}
 		logger.Info().Msgf("listening gRPC server on %s", grpcListenAddr)
+
+		reflection.Register(grpcServer)
 
 		err = grpcServer.Serve(listener)
 		if err != nil {
