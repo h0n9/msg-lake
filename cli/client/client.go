@@ -238,7 +238,7 @@ func printOutput(newline bool, msgCapsule *pb.MsgCapsule) {
 	}
 	fmt.Printf(
 		s,
-		string(msgCapsule.GetSignature().GetPubKey()),
+		fmt.Sprintf("%x", msgCapsule.GetSignature().GetPubKey()[:4]),
 		msgCapsule.GetTimestamp(),
 		msgCapsule.GetData(),
 	)
