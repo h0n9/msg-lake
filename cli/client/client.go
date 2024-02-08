@@ -88,7 +88,7 @@ var Cmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		cli := pb.NewLakeClient(conn)
+		cli := pb.NewMsgLakeClient(conn)
 
 		msg := Msg{
 			Data: []byte(topicID),
