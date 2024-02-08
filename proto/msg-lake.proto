@@ -2,7 +2,7 @@ syntax = "proto3";
 
 option go_package = "github.com/h0n9/msg-lake/proto";
 
-service Lake {
+service MsgLake {
   rpc Publish(PublishReq) returns (PublishRes);
   rpc Subscribe(SubscribeReq) returns (stream SubscribeRes);
 }
