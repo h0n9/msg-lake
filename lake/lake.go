@@ -22,7 +22,7 @@ const (
 )
 
 type Service struct {
-	pb.UnimplementedLakeServer
+	pb.UnimplementedMsgLakeServer
 
 	ctx     context.Context
 	logger  *zerolog.Logger
@@ -96,7 +96,7 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 
 	return &publishRes, nil
 }
-func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.Lake_SubscribeServer) error {
+func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_SubscribeServer) error {
 	service.logger.Debug().
 		Str("topic-id", req.GetTopicId()).
 		Msg("begin of subscribe stream")

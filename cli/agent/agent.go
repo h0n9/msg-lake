@@ -95,7 +95,7 @@ var Cmd = &cobra.Command{
 		}
 		logger.Info().Msg("initalized lake service")
 
-		pb.RegisterLakeServer(grpcServer, lakeService)
+		pb.RegisterMsgLakeServer(grpcServer, lakeService)
 		logger.Info().Msg("registered lake service to gRPC server")
 
 		listener, err := net.Listen("tcp", grpcListenAddr)
