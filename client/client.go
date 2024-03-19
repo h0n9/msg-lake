@@ -46,3 +46,15 @@ func (c *Client) Close() {
 		fmt.Printf("failed to close grpc client: %v\n", err)
 	}
 }
+
+// Subscribe() subscribes to a topic
+func (c *Client) Subscribe(topicID string) error {
+	// ...
+	return nil
+}
+
+// Publish() publishes a message to a topic
+func (c *Client) Publish(topicID, message string) error {
+	// ...
+	return nil
+}
