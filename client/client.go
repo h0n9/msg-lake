@@ -1,7 +1,9 @@
 package client
 
 import (
+	"context"
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 
 	"google.golang.org/grpc"
@@ -48,9 +50,78 @@ func (c *Client) Close() {
 }
 
 // Subscribe() subscribes to a topic
-func (c *Client) Subscribe(topicID string) error {
-	// ...
-	return nil
+func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandler func(*pb.MsgCapsule) error) error {
+	// serialize topicID
+	data, err := json.Marshal(topicID)
+	if err != nil {
+		return err
+	}
+
+	// sign the serialized topicID
+	sigDataBytes, err := c.privKey.Sign(data)
+	if err != nil {
+		return err
+	}
+
+	// subscribe to the topic
+	stream, err := c.msgLakeClient.Subscribe(ctx, &pb.SubscribeReq{
+		TopicId: topicID,
+		MsgCapsule: &pb.MsgCapsule{
+			Data: data,
+			Signature: &pb.Signature{
+				PubKey: c.privKey.PubKey().Bytes(),
+				Data:   sigDataBytes,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	// block until recieve subscribe ack msg
+	subRes, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+
+	// check subscribe ack msg
+	if subRes.GetType() != pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK {
+		return fmt.Errorf("failed to receive subscribe ack from agent")
+	}
+	if !subRes.GetOk() {
+		return fmt.Errorf("failed to begin subscribing msgs")
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+			res, err := stream.Recv()
+			if err != nil {
+				return err
+			}
+
+			// check if the received message is a relay message
+			if res.GetType() != pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY {
+				continue
+			}
+
+			// get a msgCapsule from the received message
+			msgCapsule := res.GetMsgCapsule()
+
+			// check if the msgCapsule is empty
+			if len(msgCapsule.GetData()) == 0 {
+				continue
+			}
+
+			// handle the received msgCapsule
+			err = msgCapsuleHandler(msgCapsule)
+			if err != nil {
+				fmt.Println(err)
+			}
+		}
+	}
 }
 
 // Publish() publishes a message to a topic
