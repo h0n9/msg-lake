@@ -2,6 +2,7 @@ package client
 
 import (
 	"crypto/tls"
+	"fmt"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -36,4 +37,12 @@ func NewClient(privKey *crypto.PrivKey, hostAddr string, tlsEnabled bool) (*Clie
 		grpcClientConn: grpcClientConn,
 		msgLakeClient:  msgLakeClient,
 	}, nil
+}
+
+// Close() closes the grpc client connection
+func (c *Client) Close() {
+	err := c.grpcClientConn.Close()
+	if err != nil {
+		fmt.Printf("failed to close grpc client: %v\n", err)
+	}
 }
