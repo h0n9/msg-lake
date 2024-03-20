@@ -7,6 +7,7 @@ COPY cmd/ cmd/
 COPY util/ util/
 COPY proto/ proto/
 COPY cli/ cli/
+COPY client/ client/
 COPY msg/ msg/
 COPY lake/ lake/
 COPY relayer/ relayer/
