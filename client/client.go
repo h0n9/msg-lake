@@ -125,7 +125,38 @@ func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandle
 }
 
 // Publish() publishes a message to a topic
-func (c *Client) Publish(topicID, message string) error {
-	// ...
+func (c *Client) Publish(ctx context.Context, topicID, message string) error {
+	// serialize the message
+	data, err := json.Marshal(message)
+	if err != nil {
+		return err
+	}
+
+	// sign the serialized message
+	sigDataBytes, err := c.privKey.Sign(data)
+	if err != nil {
+		return err
+	}
+
+	// publish the message
+	pubRes, err := c.msgLakeClient.Publish(ctx, &pb.PublishReq{
+		TopicId: topicID,
+		MsgCapsule: &pb.MsgCapsule{
+			Data: data,
+			Signature: &pb.Signature{
+				PubKey: c.privKey.PubKey().Bytes(),
+				Data:   sigDataBytes,
+			},
+		},
+	})
+	if err != nil {
+		return err
+	}
+
+	// check publish ack msg
+	if !pubRes.GetOk() {
+		return fmt.Errorf("failed to publish msg")
+	}
+
 	return nil
 }
