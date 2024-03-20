@@ -16,8 +16,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"google.golang.org/grpc"
-
 	"github.com/postie-labs/go-postie-lib/crypto"
 
 	"github.com/h0n9/msg-lake/client"
@@ -35,9 +33,8 @@ var Cmd = &cobra.Command{
 	Use:   "client",
 	Short: "run msg lake client (interactive)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var (
-			conn *grpc.ClientConn
-		)
+		var msgLakeClient *client.Client
+
 		// init wg
 		wg := sync.WaitGroup{}
 
@@ -58,10 +55,8 @@ var Cmd = &cobra.Command{
 				return
 			case s := <-sigCh:
 				fmt.Printf("got signal %v, attempting graceful shutdown\n", s)
-				if conn != nil {
-					fmt.Printf("closing grpc client ... ")
-					conn.Close()
-					fmt.Printf("done\n")
+				if msgLakeClient != nil {
+					msgLakeClient.Close()
 				}
 				fmt.Printf("cancelling ctx ... ")
 				cancel()
@@ -77,7 +72,7 @@ var Cmd = &cobra.Command{
 		pubKeyBytes := privKey.PubKey().Bytes()
 
 		// init msg lake client
-		msgLakeClient, err := client.NewClient(privKey, hostAddr, tlsEnabled)
+		msgLakeClient, err = client.NewClient(privKey, hostAddr, tlsEnabled)
 		if err != nil {
 			return err
 		}
