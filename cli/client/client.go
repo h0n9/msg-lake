@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"crypto/tls"
-	"encoding/json"
 	"fmt"
 	"io"
 	"math/rand"
@@ -18,12 +16,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-
 	"github.com/postie-labs/go-postie-lib/crypto"
 
+	"github.com/h0n9/msg-lake/client"
 	pb "github.com/h0n9/msg-lake/proto"
 )
 
@@ -38,9 +33,8 @@ var Cmd = &cobra.Command{
 	Use:   "client",
 	Short: "run msg lake client (interactive)",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		var (
-			conn *grpc.ClientConn
-		)
+		var msgLakeClient *client.Client
+
 		// init wg
 		wg := sync.WaitGroup{}
 
@@ -61,10 +55,8 @@ var Cmd = &cobra.Command{
 				return
 			case s := <-sigCh:
 				fmt.Printf("got signal %v, attempting graceful shutdown\n", s)
-				if conn != nil {
-					fmt.Printf("closing grpc client ... ")
-					conn.Close()
-					fmt.Printf("done\n")
+				if msgLakeClient != nil {
+					msgLakeClient.Close()
 				}
 				fmt.Printf("cancelling ctx ... ")
 				cancel()
@@ -79,81 +71,32 @@ var Cmd = &cobra.Command{
 		}
 		pubKeyBytes := privKey.PubKey().Bytes()
 
-		// init grpc client
-		creds := grpc.WithTransportCredentials(insecure.NewCredentials())
-		if tlsEnabled {
-			creds = grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{}))
-		}
-		conn, err = grpc.Dial(hostAddr, creds)
+		// init msg lake client
+		msgLakeClient, err = client.NewClient(privKey, hostAddr, tlsEnabled)
 		if err != nil {
 			return err
-		}
-		cli := pb.NewMsgLakeClient(conn)
-
-		msg := Msg{
-			Data: []byte(topicID),
-		}
-		data, err := json.Marshal(msg)
-		if err != nil {
-			return err
-		}
-		sigDataBytes, err := privKey.Sign(data)
-		if err != nil {
-			return err
-		}
-
-		stream, err := cli.Subscribe(ctx, &pb.SubscribeReq{
-			TopicId: topicID,
-			MsgCapsule: &pb.MsgCapsule{
-				Data: data,
-				Signature: &pb.Signature{
-					PubKey: pubKeyBytes,
-					Data:   sigDataBytes,
-				},
-			},
-		})
-		if err != nil {
-			return err
-		}
-
-		// block until recieve subscribe ack msg
-		subRes, err := stream.Recv()
-		if err != nil {
-			return err
-		}
-
-		// check subscribe ack msg
-		if subRes.GetType() != pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK {
-			return fmt.Errorf("failed to receive subscribe ack from agent")
-		}
-		if !subRes.GetOk() {
-			return fmt.Errorf("failed to begin subscribing msgs")
 		}
 
 		// execute goroutine (receiver)
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for {
-				res, err := stream.Recv()
-				if err != nil {
-					fmt.Println(err)
-					cancel()
-					return
-				}
-				if res.GetType() != pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY {
-					continue
-				}
-				msgCapsule := res.GetMsgCapsule()
+			err := msgLakeClient.Subscribe(ctx, topicID, func(msgCapsule *pb.MsgCapsule) error {
 				signature := msgCapsule.GetSignature()
 				if bytes.Equal(signature.GetPubKey(), pubKeyBytes) {
-					continue
+					return nil
 				}
 				if len(msgCapsule.GetData()) == 0 {
-					continue
+					return nil
 				}
 				printOutput(true, msgCapsule)
 				printInput(true)
+				return nil
+			})
+			if err != nil {
+				fmt.Println(err)
+				cancel()
+				return
 			}
 		}()
 
@@ -180,39 +123,10 @@ var Cmd = &cobra.Command{
 					if input == "" {
 						continue
 					}
-					go func() {
-						data, err := json.Marshal(input)
-						if err != nil {
-							fmt.Println(err)
-							return
-						}
-						sigDataBytes, err := privKey.Sign(data)
-						if err != nil {
-							fmt.Println(err)
-							return
-						}
-
-						pubRes, err := cli.Publish(ctx, &pb.PublishReq{
-							TopicId: topicID,
-							MsgCapsule: &pb.MsgCapsule{
-								Data: data,
-								Signature: &pb.Signature{
-									PubKey: pubKeyBytes,
-									Data:   sigDataBytes,
-								},
-							},
-						})
-						if err != nil {
-							fmt.Println(err)
-							return
-						}
-
-						// check publish res
-						if !pubRes.GetOk() {
-							fmt.Println("failed to send message")
-							return
-						}
-					}()
+					err = msgLakeClient.Publish(ctx, topicID, input)
+					if err != nil {
+						fmt.Println(err)
+					}
 				}
 			}
 		}()
