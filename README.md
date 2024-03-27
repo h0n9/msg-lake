@@ -27,7 +27,7 @@ To get started with Message Lake, follow these steps:
 
 1. Deploy a msg-lake agent with `docker` command:
 ```shell
-docker run --rm h0n9/msg-lake:latest agent
+docker run --rm ghcr.io/h0n9/msg-lake:latest agent
 ```
 
 Alternatively, you can use the docker-compose command to deploy a cluster of
@@ -42,7 +42,7 @@ above.
 2. Open a new terminal session and connect to msg-lake agent using the `docker`
 command:
 ```shell
-docker run -it --rm h0n9/msg-lake:latest client --topic "life-is-beautiful" --nickname "h0n9"
+docker run -it --rm ghcr.io/h0n9/msg-lake:latest client --topic "life-is-beautiful" --nickname "h0n9"
 ```
 
 Feel free to enhance and customize the deployment instructions based on your
