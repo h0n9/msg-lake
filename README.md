@@ -42,7 +42,7 @@ above.
 2. Open a new terminal session and connect to msg-lake agent using the `docker`
 command:
 ```shell
-docker run --network "host" -it --rm ghcr.io/h0n9/msg-lake:latest client --topic "life-is-beautiful" --nickname "h0n9"
+docker run --network "host" --rm -it ghcr.io/h0n9/msg-lake:latest client --topic "life-is-beautiful" --nickname "h0n9"
 ```
 
 Feel free to enhance and customize the deployment instructions based on your
