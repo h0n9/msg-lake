@@ -9,7 +9,7 @@ import (
 
 func CheckStrLen(target string, min, max int) bool {
 	l := len(target)
-	return l > min && l < max
+	return min <= l && l <= max
 }
 
 func GenerateRandomBase64String(size int) string {
