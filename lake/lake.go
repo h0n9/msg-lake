@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	MaxTopicIDLen = 30
+	MaxTopicIDLen = 64
 	MinTopicIDLen = 1
 
 	RandomSubscriberIDLen = 10
