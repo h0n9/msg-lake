@@ -42,6 +42,7 @@ message MsgCapsule {
   bytes data = 1;
   Signature signature = 2;
   int64 timestamp = 3;
+  bool is_encrypted = 4;
 }
 
 message Signature {
