@@ -9,6 +9,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/encoding/gzip"
 
 	pb "github.com/h0n9/msg-lake/proto"
 	"github.com/postie-labs/go-postie-lib/crypto"
@@ -139,16 +140,20 @@ func (c *Client) Publish(ctx context.Context, topicID, message string) error {
 	}
 
 	// publish the message
-	pubRes, err := c.msgLakeClient.Publish(ctx, &pb.PublishReq{
-		TopicId: topicID,
-		MsgCapsule: &pb.MsgCapsule{
-			Data: data,
-			Signature: &pb.Signature{
-				PubKey: c.privKey.PubKey().Bytes(),
-				Data:   sigDataBytes,
+	pubRes, err := c.msgLakeClient.Publish(
+		ctx,
+		&pb.PublishReq{
+			TopicId: topicID,
+			MsgCapsule: &pb.MsgCapsule{
+				Data: data,
+				Signature: &pb.Signature{
+					PubKey: c.privKey.PubKey().Bytes(),
+					Data:   sigDataBytes,
+				},
 			},
 		},
-	})
+		grpc.UseCompressor(gzip.Name),
+	)
 	if err != nil {
 		return err
 	}

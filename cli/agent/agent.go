@@ -14,6 +14,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
+	_ "google.golang.org/grpc/encoding/gzip"
 
 	"github.com/h0n9/msg-lake/lake"
 	pb "github.com/h0n9/msg-lake/proto"
