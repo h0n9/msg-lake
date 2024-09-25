@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"github.com/h0n9/msg-lake/cli/tools/loader"
 	"github.com/spf13/cobra"
 )
 
@@ -11,5 +12,7 @@ var Cmd = &cobra.Command{
 
 func init() {
 	cobra.EnableCommandSorting = false
-	Cmd.AddCommand()
+	Cmd.AddCommand(
+		loader.Cmd,
+	)
 }
