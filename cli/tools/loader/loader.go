@@ -12,6 +12,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/postie-labs/go-postie-lib/crypto"
+
 	"github.com/h0n9/msg-lake/client"
 )
 
@@ -27,8 +29,8 @@ var (
 	topicID    string
 	nickname   string
 
-	intervalStr string // "1s"
-	loadCount   int    // 0 means unlimited
+	interval  time.Duration
+	loadCount int // 0 means unlimited
 )
 
 func runE(cmd *cobra.Command, args []string) error {
@@ -63,6 +65,44 @@ func runE(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
+	/////////////////////////////////
+	// real things begin from here //
+	/////////////////////////////////
+
+	// init privKey
+	privKey, err := crypto.GenPrivKeyFromSeed([]byte(nickname))
+	if err != nil {
+		return err
+	}
+	// pubKeyBytes := privKey.PubKey().Bytes()
+
+	// init msg lake client
+	msgLakeClient, err = client.NewClient(privKey, hostAddr, tlsEnabled)
+	if err != nil {
+		return err
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		// init ticker with interval
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		i := 0
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				fmt.Println(i)
+				i += 1
+			}
+		}
+	}()
+
 	wg.Wait()
 
 	return nil
@@ -76,6 +116,6 @@ func init() {
 	Cmd.Flags().StringVar(&topicID, "topic", "life is beautiful", "topic id")
 	Cmd.Flags().StringVarP(&nickname, "nickname", "n", fmt.Sprintf("alien-%d", r), "consumer id")
 
-	Cmd.Flags().StringVar(&intervalStr, "interval", "1s", "interval")
+	Cmd.Flags().DurationVar(&interval, "interval", 1*time.Second, "interval")
 	Cmd.Flags().IntVarP(&loadCount, "count", "c", 100, "load count")
 }
