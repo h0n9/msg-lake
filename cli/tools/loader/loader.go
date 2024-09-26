@@ -53,12 +53,14 @@ func runE(cmd *cobra.Command, args []string) error {
 		defer wg.Done()
 		select {
 		case <-ctx.Done():
+			if msgLakeClient != nil {
+				fmt.Printf("closing msg lake client ... ")
+				msgLakeClient.Close()
+				fmt.Printf("done\n")
+			}
 			return
 		case s := <-sigCh:
 			fmt.Printf("got signal %v, attempting graceful shutdown\n", s)
-			if msgLakeClient != nil {
-				msgLakeClient.Close()
-			}
 			fmt.Printf("cancelling ctx ... ")
 			cancel()
 			fmt.Printf("done\n")
@@ -97,7 +99,15 @@ func runE(cmd *cobra.Command, args []string) error {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				if loadCount > 0 && i >= loadCount {
+					fmt.Println("end of load test")
+					cancel()
+					return
+				}
+				// do something here
 				fmt.Println(i)
+
+				// increment i by 1
 				i += 1
 			}
 		}
@@ -117,5 +127,5 @@ func init() {
 	Cmd.Flags().StringVarP(&nickname, "nickname", "n", fmt.Sprintf("alien-%d", r), "consumer id")
 
 	Cmd.Flags().DurationVar(&interval, "interval", 1*time.Second, "interval")
-	Cmd.Flags().IntVarP(&loadCount, "count", "c", 100, "load count")
+	Cmd.Flags().IntVarP(&loadCount, "count", "c", 0, "load count (0 means unlimited)")
 }
