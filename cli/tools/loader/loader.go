@@ -53,16 +53,16 @@ func runE(cmd *cobra.Command, args []string) error {
 		defer wg.Done()
 		select {
 		case <-ctx.Done():
-			if msgLakeClient != nil {
-				fmt.Printf("closing msg lake client ... ")
-				msgLakeClient.Close()
-				fmt.Printf("done\n")
-			}
-			return
+			fmt.Printf("cancelled context")
 		case s := <-sigCh:
-			fmt.Printf("got signal %v, attempting graceful shutdown\n", s)
+			fmt.Printf("got signal %v\n", s)
 			fmt.Printf("cancelling ctx ... ")
 			cancel()
+			fmt.Printf("done\n")
+		}
+		if msgLakeClient != nil {
+			fmt.Printf("closing msg lake client ... ")
+			msgLakeClient.Close()
 			fmt.Printf("done\n")
 		}
 	}()
