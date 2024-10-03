@@ -53,7 +53,7 @@ func runE(cmd *cobra.Command, args []string) error {
 		defer wg.Done()
 		select {
 		case <-ctx.Done():
-			fmt.Printf("cancelled context")
+			fmt.Println("cancelled context")
 		case s := <-sigCh:
 			fmt.Printf("got signal %v\n", s)
 			fmt.Printf("cancelling ctx ... ")
