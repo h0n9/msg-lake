@@ -92,7 +92,10 @@ func runE(cmd *cobra.Command, args []string) error {
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 
-		i := 0
+		var (
+			i   int = 0
+			err error
+		)
 
 		for {
 			select {
@@ -106,6 +109,10 @@ func runE(cmd *cobra.Command, args []string) error {
 				}
 				// do something here
 				fmt.Println(i)
+				err = msgLakeClient.Publish(ctx, topicID, "")
+				if err != nil {
+					fmt.Println(err)
+				}
 
 				// increment i by 1
 				i += 1
