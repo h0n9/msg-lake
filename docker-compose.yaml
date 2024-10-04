@@ -36,7 +36,7 @@ services:
     image: ghcr.io/h0n9/msg-lake
     command: ["client", "--host", "nginx:8080"]
     deploy:
-      replicas: 0
+      replicas: 3
   loader:
     depends_on:
       - nginx
