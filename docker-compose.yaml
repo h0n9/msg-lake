@@ -5,6 +5,8 @@ services:
     build:
       context: .
     image: ghcr.io/h0n9/msg-lake
+    environment:
+      - UNARY_SERVER_INTERCEPTOR_RATE_LIMIT=10
     command: ["agent", "--mdns"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]
