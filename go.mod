@@ -1,6 +1,6 @@
 module github.com/h0n9/msg-lake
 
-go 1.20
+go 1.23
 
 require (
 	github.com/libp2p/go-libp2p v0.32.0

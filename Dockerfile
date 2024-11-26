@@ -1,5 +1,5 @@
 # builder
-FROM golang:1.20.4-alpine3.17 AS builder
+FROM golang:1.23.3-alpine3.20 AS builder
 WORKDIR /usr/src/app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -14,7 +14,7 @@ COPY relayer/ relayer/
 RUN go build ./cmd/msg-lake
 
 # runner
-FROM alpine:3.17.3 AS runner
+FROM alpine:3.20 AS runner
 WORKDIR /usr/bin/app
 RUN addgroup --system app && adduser --system --shell /bin/false --ingroup app app
 COPY --from=builder /usr/src/app/msg-lake .
