@@ -5,6 +5,7 @@ import (
 
 	"github.com/h0n9/msg-lake/cli/agent"
 	"github.com/h0n9/msg-lake/cli/client"
+	"github.com/h0n9/msg-lake/cli/tools"
 )
 
 var RootCmd = &cobra.Command{
@@ -17,5 +18,6 @@ func init() {
 	RootCmd.AddCommand(
 		agent.Cmd,
 		client.Cmd,
+		tools.Cmd,
 	)
 }

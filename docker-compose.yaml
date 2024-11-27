@@ -5,6 +5,8 @@ services:
     build:
       context: .
     image: ghcr.io/h0n9/msg-lake
+    environment:
+      - UNARY_SERVER_INTERCEPTOR_RATE_LIMIT=10
     command: ["agent", "--mdns"]
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080"]
@@ -36,4 +38,11 @@ services:
     image: ghcr.io/h0n9/msg-lake
     command: ["client", "--host", "nginx:8080"]
     deploy:
-      replicas: 0
+      replicas: 3
+  loader:
+    depends_on:
+      - nginx
+    image: ghcr.io/h0n9/msg-lake
+    command: ["tools", "loader", "--interval", "10ms", "--host", "nginx:8080"]
+    deploy:
+      replicas: 10
