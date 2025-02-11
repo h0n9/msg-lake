@@ -29,7 +29,7 @@ require (
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.3.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/elastic/gosigar v0.14.3 // indirect
-	github.com/ethereum/go-ethereum v1.14.12 // indirect
+	github.com/ethereum/go-ethereum v1.14.13 // indirect
 	github.com/flynn/noise v1.1.0 // indirect
 	github.com/francoispqt/gojay v1.2.13 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
