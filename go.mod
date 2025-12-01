@@ -5,11 +5,11 @@ go 1.24.6
 require (
 	github.com/libp2p/go-libp2p v0.45.0
 	github.com/libp2p/go-libp2p-kad-dht v0.36.0
-	github.com/libp2p/go-libp2p-pubsub v0.14.1
+	github.com/libp2p/go-libp2p-pubsub v0.15.0
 	github.com/multiformats/go-multiaddr v0.16.1
 	github.com/postie-labs/go-postie-lib v0.0.7
-	github.com/rs/zerolog v1.33.0
-	github.com/spf13/cobra v1.8.1
+	github.com/rs/zerolog v1.34.0
+	github.com/spf13/cobra v1.10.1
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/ratelimit v0.3.1
 	google.golang.org/grpc v1.75.0
@@ -109,7 +109,7 @@ require (
 	github.com/quic-go/quic-go v0.55.0 // indirect
 	github.com/quic-go/webtransport-go v0.9.0 // indirect
 	github.com/spaolacci/murmur3 v1.1.0 // indirect
-	github.com/spf13/pflag v1.0.5 // indirect
+	github.com/spf13/pflag v1.0.9 // indirect
 	github.com/whyrusleeping/go-keyspace v0.0.0-20160322163242-5b898ac5add1 // indirect
 	github.com/wlynxg/anet v0.0.5 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
