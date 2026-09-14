@@ -2,13 +2,16 @@ package lake
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"sync"
 
 	"github.com/rs/zerolog"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/postie-labs/go-postie-lib/crypto"
 
+	"github.com/h0n9/msg-lake/msg"
 	pb "github.com/h0n9/msg-lake/proto"
 	"github.com/h0n9/msg-lake/relayer"
 	"github.com/h0n9/msg-lake/util"
@@ -158,7 +161,7 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 	subscriberID := util.GenerateRandomBase64String(RandomSubscriberIDLen)
 
 	// register subscriber id to msg box
-	subscriberCh, err := msgBox.JoinSub(subscriberID)
+	subscriber, err := msgBox.JoinSub(subscriberID)
 	if err != nil {
 		err := stream.Send(&res)
 		if err != nil {
@@ -171,6 +174,18 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 		Str("topic-id", req.GetTopicId()).
 		Str("subscriber-id", subscriberID).
 		Msg("joined subscriber")
+	defer func() {
+		if err := msgBox.LeaveSub(subscriberID); err != nil {
+			service.logger.Err(err).
+				Str("topic-id", req.GetTopicId()).
+				Str("subscriber-id", subscriberID).
+				Msg("failed to leave subscriber")
+		}
+		service.logger.Info().
+			Str("topic-id", req.GetTopicId()).
+			Str("subscriber-id", subscriberID).
+			Msg("left subscriber")
+	}()
 
 	// update subscriber res
 	res.SubscriberId = subscriberID
@@ -182,16 +197,17 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 		return err
 	}
 
-	wg := sync.WaitGroup{}
-
-	wg.Add(1)
+	sendResultCh := make(chan error, 1)
 	go func() {
-		defer wg.Done()
 		for {
 			select {
 			case <-stream.Context().Done():
+				sendResultCh <- stream.Context().Err()
 				return
-			case msgCapsule := <-subscriberCh:
+			case <-subscriber.Done():
+				sendResultCh <- subscriber.Err()
+				return
+			case msgCapsule := <-subscriber.Messages():
 				err := stream.Send(&pb.SubscribeRes{
 					Type: pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY,
 					Res: &pb.SubscribeRes_MsgCapsule{
@@ -199,6 +215,7 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 					},
 				})
 				if err != nil {
+					sendResultCh <- err
 					return
 				}
 				msgCapsule = nil // explicitly free
@@ -206,29 +223,22 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 		}
 	}()
 
-	wg.Wait()
-
-	go func() {
-		for len(subscriberCh) > 0 {
-			<-subscriberCh
-		}
-		service.logger.Debug().
-			Str("topic-id", req.GetTopicId()).
-			Str("subscriber-id", subscriberID).
-			Msg("drained subscriber ch")
-	}()
-
-	err = msgBox.LeaveSub(subscriberID)
-	if err != nil {
-		service.logger.Err(err).
-			Str("topic-id", req.GetTopicId()).
-			Str("subscriber-id", subscriberID).
-			Msg("")
+	select {
+	case <-stream.Context().Done():
+		return nil
+	case <-subscriber.Done():
+		return subscriberStreamError(subscriber.Err())
+	case err := <-sendResultCh:
+		return subscriberStreamError(err)
 	}
-	service.logger.Info().
-		Str("topic-id", req.GetTopicId()).
-		Str("subscriber-id", subscriberID).
-		Msg("left subscriber")
+}
 
-	return nil
+func subscriberStreamError(err error) error {
+	if errors.Is(err, msg.ErrSlowSubscriber) {
+		return status.Error(codes.ResourceExhausted, "subscriber queue is full")
+	}
+	if errors.Is(err, context.Canceled) {
+		return nil
+	}
+	return err
 }
