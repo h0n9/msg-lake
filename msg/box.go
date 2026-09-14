@@ -17,7 +17,7 @@ import (
 
 const (
 	DefaultInternalChanBufferSize = 5000
-	DefaultExternalChanBufferSize = 1000
+	DefaultExternalChanBufferSize = 256
 )
 
 var (
@@ -44,7 +44,7 @@ type Box struct {
 	subCtx    context.Context
 	subCancel context.CancelFunc
 
-	subscribers map[string]SubscriberCh
+	subscribers map[string]*Subscriber
 }
 
 func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, error) {
@@ -68,17 +68,36 @@ func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, 
 		subCtx:    nil,
 		subCancel: nil,
 
-		subscribers: make(map[string]SubscriberCh),
+		subscribers: make(map[string]*Subscriber),
 	}
 
+	box.wg.Add(1)
 	go func() {
+		defer box.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
+				for _, subscriber := range box.subscribers {
+					subscriber.stop(ErrBoxClosed)
+				}
 				return
 			case msgCapsule := <-box.subCh:
-				for _, subscriberCh := range box.subscribers {
-					subscriberCh <- msgCapsule
+				for subscriberID, subscriber := range box.subscribers {
+					select {
+					case subscriber.messages <- msgCapsule:
+					default:
+						delete(box.subscribers, subscriberID)
+						subscriber.stop(ErrSlowSubscriber)
+						box.logger.Warn().
+							Str("topic-id", box.topicID).
+							Str("subscriber-id", subscriberID).
+							Int("queue-length", len(subscriber.messages)).
+							Int("queue-capacity", cap(subscriber.messages)).
+							Msg("removed slow subscriber")
+					}
+				}
+				if len(box.subscribers) == 0 {
+					box.StopSub()
 				}
 				msgCapsule = nil // explicitly free
 			case setSubscriber := <-box.setSubscriberCh:
@@ -87,23 +106,19 @@ func NewBox(logger *zerolog.Logger, topicID string, topic *pubsub.Topic) (*Box, 
 					setSubscriber.errCh <- fmt.Errorf("%s is already subscribing", setSubscriber.subscriberID)
 					continue
 				}
-				box.subscribers[setSubscriber.subscriberID] = setSubscriber.subscriberCh
+				box.subscribers[setSubscriber.subscriberID] = setSubscriber.subscriber
 				if box.sub == nil {
 					go box.startSub()
 				}
 				setSubscriber.errCh <- nil
 			case deleteSubscriber := <-box.deleteSubscriberCh:
-				subscriberCh, exist := box.subscribers[deleteSubscriber.subscriberID]
+				subscriber, exist := box.subscribers[deleteSubscriber.subscriberID]
 				if !exist {
-					deleteSubscriber.errCh <- fmt.Errorf("%s is not subscribing", <-deleteSubscriber.errCh)
+					deleteSubscriber.errCh <- nil
 					continue
 				}
-				close(subscriberCh)
-				subLogger.Debug().
-					Str("topic-id", topicID).
-					Str("subscriber-id", deleteSubscriber.subscriberID).
-					Msg("closed channel")
 				delete(box.subscribers, deleteSubscriber.subscriberID)
+				subscriber.stop(nil)
 				subLogger.Debug().
 					Str("topic-id", topicID).
 					Str("subscriber-id", deleteSubscriber.subscriberID).
@@ -187,16 +202,7 @@ func (box *Box) StopSub() {
 func (box *Box) Close() error {
 	// cancel context
 	box.cancel()
-
-	// close channels
-	close(box.setSubscriberCh)
-	close(box.deleteSubscriberCh)
-	close(box.subCh)
-
-	// clean up subscribers
-	for id := range box.subscribers {
-		delete(box.subscribers, id)
-	}
+	box.wg.Wait()
 
 	// cancel topic subscription
 	box.StopSub()
@@ -214,40 +220,57 @@ func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
 	return box.topic.Publish(box.ctx, data)
 }
 
-func (box *Box) JoinSub(subscriberID string) (SubscriberCh, error) {
+func (box *Box) JoinSub(subscriberID string) (*Subscriber, error) {
 	var (
-		subscriberCh = make(SubscriberCh, externalChanBufferSize)
-		errCh        = make(chan error)
+		subscriber = newSubscriber(externalChanBufferSize)
+		errCh      = make(chan error, 1)
 	)
-	defer close(errCh)
 
-	box.setSubscriberCh <- setSubscriber{
+	select {
+	case <-box.ctx.Done():
+		subscriber.stop(ErrBoxClosed)
+		return nil, ErrBoxClosed
+	case box.setSubscriberCh <- setSubscriber{
 		subscriberID: subscriberID,
-		subscriberCh: subscriberCh,
-
-		errCh: errCh,
+		subscriber:   subscriber,
+		errCh:        errCh,
+	}:
 	}
-	err := <-errCh
+	var err error
+	select {
+	case <-box.ctx.Done():
+		subscriber.stop(ErrBoxClosed)
+		return nil, ErrBoxClosed
+	case err = <-errCh:
+	}
 	if err != nil {
-		close(subscriberCh)
+		subscriber.stop(err)
 		return nil, err
 	}
 
-	return subscriberCh, nil
+	return subscriber, nil
 }
 
 func (box *Box) LeaveSub(subscriberID string) error {
 	var (
-		errCh = make(chan error)
+		errCh = make(chan error, 1)
 	)
-	defer close(errCh)
 
-	box.deleteSubscriberCh <- deleteSubscriber{
+	select {
+	case <-box.ctx.Done():
+		return nil
+	case box.deleteSubscriberCh <- deleteSubscriber{
 		subscriberID: subscriberID,
 
 		errCh: errCh,
+	}:
 	}
-	err := <-errCh
+	var err error
+	select {
+	case <-box.ctx.Done():
+		return nil
+	case err = <-errCh:
+	}
 	if err != nil {
 		return err
 	}
@@ -261,9 +284,16 @@ func init() {
 	}
 	internalChanBufferSize = tmp
 
-	tmp, err = util.GetEnvInt("EXTERNAL_CHAN_BUFFER_SIZE", DefaultExternalChanBufferSize)
+	externalChanBufferSize = loadExternalChanBufferSize()
+}
+
+func loadExternalChanBufferSize() int {
+	size, err := util.GetEnvInt("EXTERNAL_CHAN_BUFFER_SIZE", DefaultExternalChanBufferSize)
 	if err != nil {
 		panic(err)
 	}
-	externalChanBufferSize = tmp
+	if size <= 0 {
+		panic("EXTERNAL_CHAN_BUFFER_SIZE must be greater than zero")
+	}
+	return size
 }
