@@ -12,8 +12,8 @@ func TestCheckStrLen(t *testing.T) {
 	assert.True(t, CheckStrLen("abc", 1, 5), "length is between min and max")
 	assert.False(t, CheckStrLen("abcdef", 1, 5), "length exceeds max")
 	assert.False(t, CheckStrLen("a", 2, 4), "length is below min")
-	assert.False(t, CheckStrLen("", 0, 10), "empty string is within range")
-	assert.False(t, CheckStrLen("hello", 5, 5), "length equals max (excluded)")
+	assert.True(t, CheckStrLen("", 0, 10), "empty string satisfies an inclusive zero minimum")
+	assert.True(t, CheckStrLen("hello", 5, 5), "length equals inclusive min and max")
 }
 
 func TestGenerateRandomBase64String(t *testing.T) {
