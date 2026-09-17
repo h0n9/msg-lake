@@ -7,7 +7,7 @@ import (
 	pb "github.com/h0n9/msg-lake/proto"
 )
 
-type SubscriberCh chan *pb.MsgCapsule
+type SubscriberCh chan *pb.TimestampedSignedMsgCapsule
 
 var (
 	ErrSlowSubscriber = errors.New("subscriber queue is full")
@@ -30,7 +30,7 @@ func newSubscriber(bufferSize int) *Subscriber {
 	}
 }
 
-func (subscriber *Subscriber) Messages() <-chan *pb.MsgCapsule {
+func (subscriber *Subscriber) Messages() <-chan *pb.TimestampedSignedMsgCapsule {
 	return subscriber.messages
 }
 

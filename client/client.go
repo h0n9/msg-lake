@@ -12,16 +12,28 @@ import (
 	"google.golang.org/grpc/encoding/gzip"
 
 	pb "github.com/h0n9/msg-lake/proto"
+	"github.com/h0n9/msg-lake/protocol"
 	"github.com/postie-labs/go-postie-lib/crypto"
 )
 
 type Client struct {
-	privKey        *crypto.PrivKey
-	grpcClientConn *grpc.ClientConn
-	msgLakeClient  pb.MsgLakeClient
+	privKey                *crypto.PrivKey
+	grpcClientConn         *grpc.ClientConn
+	msgLakeClient          pb.MsgLakeClient
+	verifyReceivedMessages bool
 }
 
-func NewClient(privKey *crypto.PrivKey, hostAddr string, tlsEnabled bool) (*Client, error) {
+type Option func(*Client)
+
+// WithReceivedMessageVerification controls end-to-end signature verification
+// before Subscribe invokes its message handler. It is disabled by default.
+func WithReceivedMessageVerification(enabled bool) Option {
+	return func(client *Client) {
+		client.verifyReceivedMessages = enabled
+	}
+}
+
+func NewClient(privKey *crypto.PrivKey, hostAddr string, tlsEnabled bool, opts ...Option) (*Client, error) {
 	// init grpc client
 	creds := grpc.WithTransportCredentials(insecure.NewCredentials())
 	if tlsEnabled {
@@ -35,11 +47,17 @@ func NewClient(privKey *crypto.PrivKey, hostAddr string, tlsEnabled bool) (*Clie
 	// init msg lake client
 	msgLakeClient := pb.NewMsgLakeClient(grpcClientConn)
 
-	return &Client{
+	client := &Client{
 		privKey:        privKey,
 		grpcClientConn: grpcClientConn,
 		msgLakeClient:  msgLakeClient,
-	}, nil
+	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(client)
+		}
+	}
+	return client, nil
 }
 
 // Close() closes the grpc client connection
@@ -51,15 +69,9 @@ func (c *Client) Close() {
 }
 
 // Subscribe() subscribes to a topic
-func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandler func(*pb.MsgCapsule) error) error {
-	// serialize topicID
-	data, err := json.Marshal(topicID)
-	if err != nil {
-		return err
-	}
-
-	// sign the serialized topicID
-	sigDataBytes, err := c.privKey.Sign(data)
+func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandler func(*pb.TimestampedSignedMsgCapsule) error) error {
+	// sign the UTF-8 bytes of topicID
+	sigDataBytes, err := c.privKey.Sign(protocol.SubscribeSigningBytes(topicID))
 	if err != nil {
 		return err
 	}
@@ -67,12 +79,9 @@ func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandle
 	// subscribe to the topic
 	stream, err := c.msgLakeClient.Subscribe(ctx, &pb.SubscribeReq{
 		TopicId: topicID,
-		MsgCapsule: &pb.MsgCapsule{
-			Data: data,
-			Signature: &pb.Signature{
-				PubKey: c.privKey.PubKey().Bytes(),
-				Data:   sigDataBytes,
-			},
+		Signature: &pb.Signature{
+			PubKey: c.privKey.PubKey().Bytes(),
+			Data:   sigDataBytes,
 		},
 	})
 	if err != nil {
@@ -109,11 +118,15 @@ func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandle
 			}
 
 			// get a msgCapsule from the received message
-			msgCapsule := res.GetMsgCapsule()
+			msgCapsule := res.GetTimestampedSignedMsgCapsule()
 
-			// check if the msgCapsule is empty
-			if len(msgCapsule.GetData()) == 0 {
+			if msgCapsule == nil {
 				continue
+			}
+			if c.verifyReceivedMessages {
+				if err := protocol.VerifyTimestampedSignedMsgCapsule(msgCapsule, topicID); err != nil {
+					return fmt.Errorf("verify received msg capsule: %w", err)
+				}
 			}
 
 			// handle the received msgCapsule
@@ -127,14 +140,23 @@ func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandle
 
 // Publish() publishes a message to a topic
 func (c *Client) Publish(ctx context.Context, topicID, message string) error {
-	// serialize the message
+	// serialize the application message
 	data, err := json.Marshal(message)
 	if err != nil {
 		return err
 	}
 
-	// sign the serialized message
-	sigDataBytes, err := c.privKey.Sign(data)
+	msgCapsule := &pb.MsgCapsule{
+		TopicId: topicID,
+		Data:    data,
+	}
+	signingBytes, err := protocol.MsgCapsuleSigningBytes(msgCapsule)
+	if err != nil {
+		return err
+	}
+
+	// sign the deterministic protobuf encoding of MsgCapsule
+	sigDataBytes, err := c.privKey.Sign(signingBytes)
 	if err != nil {
 		return err
 	}
@@ -143,9 +165,8 @@ func (c *Client) Publish(ctx context.Context, topicID, message string) error {
 	pubRes, err := c.msgLakeClient.Publish(
 		ctx,
 		&pb.PublishReq{
-			TopicId: topicID,
-			MsgCapsule: &pb.MsgCapsule{
-				Data: data,
+			SignedMsgCapsule: &pb.SignedMsgCapsule{
+				MsgCapsule: msgCapsule,
 				Signature: &pb.Signature{
 					PubKey: c.privKey.PubKey().Bytes(),
 					Data:   sigDataBytes,
@@ -164,4 +185,9 @@ func (c *Client) Publish(ctx context.Context, topicID, message string) error {
 	}
 
 	return nil
+}
+
+// VerifyReceivedMessage verifies a relayed client signature and topic binding.
+func VerifyReceivedMessage(msg *pb.TimestampedSignedMsgCapsule, expectedTopicID string) error {
+	return protocol.VerifyTimestampedSignedMsgCapsule(msg, expectedTopicID)
 }

@@ -6,6 +6,7 @@ RUN go mod download
 COPY cmd/ cmd/
 COPY util/ util/
 COPY proto/ proto/
+COPY protocol/ protocol/
 COPY cli/ cli/
 COPY client/ client/
 COPY msg/ msg/

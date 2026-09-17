@@ -47,13 +47,24 @@ func (center *Center) GetBox(topicID string) (*Box, error) {
 		return box, nil
 	}
 
+	err := center.ps.RegisterTopicValidator(
+		topicID,
+		newTopicValidator(topicID),
+		pubsub.WithValidatorInline(true),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	topic, err := center.ps.Join(topicID)
 	if err != nil {
+		_ = center.ps.UnregisterTopicValidator(topicID)
 		return nil, err
 	}
 	box, err = NewBox(center.logger, topicID, topic)
 	if err != nil {
 		_ = topic.Close()
+		_ = center.ps.UnregisterTopicValidator(topicID)
 		return nil, err
 	}
 	center.boxes[topicID] = box
@@ -74,6 +85,9 @@ func (center *Center) LeaveBox(topicID string) error {
 		return err
 	}
 	delete(center.boxes, topicID)
+	if err := center.ps.UnregisterTopicValidator(topicID); err != nil {
+		return err
+	}
 	center.logger.Debug().Str("topic-id", topicID).Msg("left")
 	return nil
 }

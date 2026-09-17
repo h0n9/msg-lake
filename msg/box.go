@@ -170,7 +170,7 @@ func (box *Box) startSub() {
 					box.logger.Err(err).Msg("")
 					continue
 				}
-				msgCapsule := pb.MsgCapsule{}
+				msgCapsule := pb.TimestampedSignedMsgCapsule{}
 				err = proto.Unmarshal(pubSubMsg.GetData(), &msgCapsule)
 				if err != nil {
 					box.logger.Err(err).Msg("")
@@ -211,9 +211,12 @@ func (box *Box) Close() error {
 	return box.topic.Close()
 }
 
-func (box *Box) Publish(msgCapsule *pb.MsgCapsule) error {
-	msgCapsule.Timestamp = time.Now().UnixNano()
-	data, err := proto.Marshal(msgCapsule)
+func (box *Box) Publish(msgCapsule *pb.SignedMsgCapsule) error {
+	timestamped := &pb.TimestampedSignedMsgCapsule{
+		Timestamp:        time.Now().UnixNano(),
+		SignedMsgCapsule: msgCapsule,
+	}
+	data, err := proto.Marshal(timestamped)
 	if err != nil {
 		return err
 	}
