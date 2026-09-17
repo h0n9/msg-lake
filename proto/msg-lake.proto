@@ -18,6 +18,7 @@ message PublishRes {
 
 message SubscribeReq {
   string topic_id = 1;
+  // Signs the UTF-8 bytes of topic_id.
   Signature signature = 2;
 }
 
@@ -45,10 +46,12 @@ message MsgCapsule {
 
 message SignedMsgCapsule {
   MsgCapsule msg_capsule = 1;
+  // Signs the deterministic protobuf encoding of msg_capsule.
   Signature signature = 2;
 }
 
 message TimestampedSignedMsgCapsule {
+  // Unix timestamp in nanoseconds assigned by the ingress agent.
   int64 timestamp = 1;
   SignedMsgCapsule signed_msg_capsule = 2;
 }
