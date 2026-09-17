@@ -8,8 +8,7 @@ service MsgLake {
 }
 
 message PublishReq {
-  string topic_id = 1;
-  MsgCapsule msg_capsule = 2;
+  SignedMsgCapsule signed_msg_capsule = 1;
 }
 
 message PublishRes {
@@ -19,7 +18,7 @@ message PublishRes {
 
 message SubscribeReq {
   string topic_id = 1;
-  MsgCapsule msg_capsule = 2;
+  Signature signature = 2;
 }
 
 message SubscribeRes {
@@ -28,7 +27,7 @@ message SubscribeRes {
   string subscriber_id = 3;
   oneof res {
     bool ok = 4;
-    MsgCapsule msg_capsule = 5;
+    TimestampedSignedMsgCapsule timestamped_signed_msg_capsule = 5;
   }
 }
 
@@ -39,10 +38,19 @@ enum SubscribeResType {
 }
 
 message MsgCapsule {
-  bytes data = 1;
+  string topic_id = 1;
+  bytes data = 2;
+  bool is_encrypted = 3;
+}
+
+message SignedMsgCapsule {
+  MsgCapsule msg_capsule = 1;
   Signature signature = 2;
-  int64 timestamp = 3;
-  bool is_encrypted = 4;
+}
+
+message TimestampedSignedMsgCapsule {
+  int64 timestamp = 1;
+  SignedMsgCapsule signed_msg_capsule = 2;
 }
 
 message Signature {
