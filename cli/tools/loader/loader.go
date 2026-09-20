@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -107,9 +108,8 @@ func runE(cmd *cobra.Command, args []string) error {
 					cancel()
 					return
 				}
-				// do something here
 				fmt.Println(i)
-				err = msgLakeClient.Publish(ctx, topicID, "")
+				err = msgLakeClient.Publish(ctx, topicID, strconv.Itoa(i))
 				if err != nil {
 					fmt.Println(err)
 				}

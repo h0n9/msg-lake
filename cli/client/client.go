@@ -81,15 +81,17 @@ var Cmd = &cobra.Command{
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			err := msgLakeClient.Subscribe(ctx, topicID, func(msgCapsule *pb.MsgCapsule) error {
-				signature := msgCapsule.GetSignature()
+			err := msgLakeClient.Subscribe(ctx, topicID, func(timestamped *pb.TimestampedSignedMsgCapsule) error {
+				signed := timestamped.GetSignedMsgCapsule()
+				msgCapsule := signed.GetMsgCapsule()
+				signature := signed.GetSignature()
 				if bytes.Equal(signature.GetPubKey(), pubKeyBytes) {
 					return nil
 				}
 				if len(msgCapsule.GetData()) == 0 {
 					return nil
 				}
-				printOutput(true, msgCapsule)
+				printOutput(true, timestamped)
 				printInput(true)
 				return nil
 			})
@@ -145,15 +147,17 @@ func printInput(newline bool) {
 	fmt.Printf(s, "me")
 }
 
-func printOutput(newline bool, msgCapsule *pb.MsgCapsule) {
+func printOutput(newline bool, timestamped *pb.TimestampedSignedMsgCapsule) {
 	s := "📩 <%s> [%d] %s"
 	if newline {
 		s = "\r\n" + s
 	}
+	signed := timestamped.GetSignedMsgCapsule()
+	msgCapsule := signed.GetMsgCapsule()
 	fmt.Printf(
 		s,
-		fmt.Sprintf("%x", msgCapsule.GetSignature().GetPubKey()[:4]),
-		msgCapsule.GetTimestamp(),
+		fmt.Sprintf("%x", signed.GetSignature().GetPubKey()[:4]),
+		timestamped.GetTimestamp(),
 		msgCapsule.GetData(),
 	)
 }

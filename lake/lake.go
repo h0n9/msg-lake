@@ -13,6 +13,7 @@ import (
 
 	"github.com/h0n9/msg-lake/msg"
 	pb "github.com/h0n9/msg-lake/proto"
+	"github.com/h0n9/msg-lake/protocol"
 	"github.com/h0n9/msg-lake/relayer"
 	"github.com/h0n9/msg-lake/util"
 )
@@ -53,44 +54,45 @@ func (service *Service) Close() {
 }
 
 func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
+	signedMsgCapsule := req.GetSignedMsgCapsule()
+	msgCapsule := signedMsgCapsule.GetMsgCapsule()
+	topicID := msgCapsule.GetTopicId()
+
 	// set publish res
 	publishRes := pb.PublishRes{
-		TopicId: req.GetTopicId(),
+		TopicId: topicID,
 		Ok:      false,
 	}
 
 	// check constraints
-	if !util.CheckStrLen(req.GetTopicId(), MinTopicIDLen, MaxTopicIDLen) {
+	if !util.CheckStrLen(topicID, MinTopicIDLen, MaxTopicIDLen) {
 		return &publishRes, fmt.Errorf("failed to verify length of topic id")
 	}
-	pubKey, err := crypto.GenPubKeyFromBytes(req.GetMsgCapsule().GetSignature().GetPubKey())
+	if err := protocol.VerifySignedMsgCapsule(signedMsgCapsule); err != nil {
+		return &publishRes, fmt.Errorf("failed to verify signed msg capsule: %w", err)
+	}
+	pubKey, err := crypto.GenPubKeyFromBytes(signedMsgCapsule.GetSignature().GetPubKey())
 	if err != nil {
 		return &publishRes, err
-	}
-	if !pubKey.Verify(
-		req.GetMsgCapsule().GetData(),
-		req.GetMsgCapsule().GetSignature().GetData(),
-	) {
-		return &publishRes, fmt.Errorf("failed to verify signed data")
 	}
 
 	// get msg center
 	msgCenter := service.relayer.GetMsgCenter()
 
 	// get msg box
-	msgBox, err := msgCenter.GetBox(req.GetTopicId())
+	msgBox, err := msgCenter.GetBox(topicID)
 	if err != nil {
 		return &publishRes, err
 	}
 
 	// publish msg
-	err = msgBox.Publish(req.GetMsgCapsule())
+	err = msgBox.Publish(signedMsgCapsule)
 	if err != nil {
 		return &publishRes, err
 	}
 
 	service.logger.Debug().
-		Str("topic-id", req.GetTopicId()).
+		Str("topic-id", topicID).
 		Str("addr", pubKey.Address().String()).
 		Msg("published")
 
@@ -124,26 +126,12 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 		}
 		return nil
 	}
-	pubKeyBytes := req.MsgCapsule.GetSignature().GetPubKey()
-	pubKey, err := crypto.GenPubKeyFromBytes(pubKeyBytes)
-	if err != nil {
-		err := stream.Send(&res)
-		if err != nil {
-			return err
+	if err := protocol.VerifySubscribe(req.GetTopicId(), req.GetSignature()); err != nil {
+		if sendErr := stream.Send(&res); sendErr != nil {
+			return sendErr
 		}
 		return nil
 	}
-	if !pubKey.Verify(
-		req.GetMsgCapsule().GetData(),
-		req.GetMsgCapsule().GetSignature().GetData(),
-	) {
-		err := stream.Send(&res)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-
 	// get msg center
 	msgCenter := service.relayer.GetMsgCenter()
 
@@ -210,8 +198,8 @@ func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 			case msgCapsule := <-subscriber.Messages():
 				err := stream.Send(&pb.SubscribeRes{
 					Type: pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY,
-					Res: &pb.SubscribeRes_MsgCapsule{
-						MsgCapsule: msgCapsule,
+					Res: &pb.SubscribeRes_TimestampedSignedMsgCapsule{
+						TimestampedSignedMsgCapsule: msgCapsule,
 					},
 				})
 				if err != nil {

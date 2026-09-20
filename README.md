@@ -21,6 +21,24 @@ through Protocol Buffers (protobuf) for message serialization.
 - Cluster: Supports clustering of Message Lake agents to achieve high
 availability and fault tolerance.
 
+## Signed message protocol
+
+msg-lake is an open relay: any client with a valid asymmetric key may publish
+to or subscribe from any topic. It does not provide topic ACLs, nonce tracking,
+replay rejection, or exactly-once delivery.
+
+Publishers sign the deterministic Protocol Buffers encoding of `MsgCapsule`,
+which binds `topic_id`, `data`, and `is_encrypted` to the client signature.
+Subscribers sign the UTF-8 bytes of `topic_id`. The ingress agent verifies the
+client signature and adds a nanosecond Unix timestamp outside the signed
+capsule before relaying it through GossipSub. Every receiving agent verifies
+the client signature and topic binding before local fan-out.
+
+The Go client can additionally verify relayed messages before invoking the
+subscription callback by passing `client.WithReceivedMessageVerification(true)`
+to `client.NewClient`. This end-to-end client verification is disabled by
+default to avoid an ECDSA verification for every subscriber delivery.
+
 ## Getting Started
 
 To get started with Message Lake, follow these steps:

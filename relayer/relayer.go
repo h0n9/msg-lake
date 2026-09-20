@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	protocolID      = protocol.ID("/msg-lake/v1.0-beta-0")
+	protocolID      = protocol.ID("/msg-lake/v1.0-beta-1")
 	mdnsServiceName = "_p2p_msg-lake._udp"
 )
 
@@ -132,7 +132,14 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs 
 	ps, err := pubsub.NewGossipSub(
 		ctx,
 		h,
-		// msgs routing internally don't need to be signed and verified
+		pubsub.WithGossipSubProtocols(
+			[]protocol.ID{protocolID},
+			func(_ pubsub.GossipSubFeature, id protocol.ID) bool {
+				return id == protocolID
+			},
+		),
+		// Disable GossipSub transport signatures. Topic validators verify the
+		// end-to-end client signature carried by each capsule instead.
 		pubsub.WithMessageSigning(false),
 		// msgs are removed from time cache after 3 seconds since first seen
 		pubsub.WithSeenMessagesTTL(3*time.Second),
@@ -142,7 +149,7 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs 
 		return nil, err
 	}
 	relayer.msgCenter = msg.NewCenter(ctx, &subLogger, ps)
-	subLogger.Info().Msg("initialized gossip sub")
+	subLogger.Info().Str("protocol-id", string(protocolID)).Msg("initialized gossip sub")
 
 	return &relayer, nil
 }

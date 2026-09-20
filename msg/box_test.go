@@ -44,10 +44,10 @@ func TestBoxFanOutPreservesOrder(t *testing.T) {
 	first := joinTestSubscriber(t, box, "first")
 	second := joinTestSubscriber(t, box, "second")
 
-	messages := []*pb.MsgCapsule{
-		{Data: []byte("one")},
-		{Data: []byte("two")},
-		{Data: []byte("three")},
+	messages := []*pb.TimestampedSignedMsgCapsule{
+		testTimestampedMessage("one"),
+		testTimestampedMessage("two"),
+		testTimestampedMessage("three"),
 	}
 	for _, message := range messages {
 		box.subCh <- message
@@ -73,10 +73,10 @@ func TestBoxFanOutRemovesOnlySlowSubscriber(t *testing.T) {
 	healthy := joinTestSubscriber(t, box, "healthy")
 
 	for range cap(slow.messages) {
-		slow.messages <- &pb.MsgCapsule{Data: []byte("queued")}
+		slow.messages <- testTimestampedMessage("queued")
 	}
 
-	first := &pb.MsgCapsule{Data: []byte("first")}
+	first := testTimestampedMessage("first")
 	box.subCh <- first
 
 	select {
@@ -97,7 +97,7 @@ func TestBoxFanOutRemovesOnlySlowSubscriber(t *testing.T) {
 		t.Fatal("healthy subscriber was blocked by slow subscriber")
 	}
 
-	second := &pb.MsgCapsule{Data: []byte("second")}
+	second := testTimestampedMessage("second")
 	box.subCh <- second
 	select {
 	case got := <-healthy.Messages():
@@ -113,6 +113,14 @@ func TestBoxFanOutRemovesOnlySlowSubscriber(t *testing.T) {
 	late := joinTestSubscriber(t, box, "late")
 	if late == nil {
 		t.Fatal("joining a subscriber after overflow returned nil")
+	}
+}
+
+func testTimestampedMessage(data string) *pb.TimestampedSignedMsgCapsule {
+	return &pb.TimestampedSignedMsgCapsule{
+		SignedMsgCapsule: &pb.SignedMsgCapsule{
+			MsgCapsule: &pb.MsgCapsule{Data: []byte(data)},
+		},
 	}
 }
 
