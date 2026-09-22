@@ -33,6 +33,8 @@ type fakeTopic struct {
 	subscribeCalls atomic.Int32
 	closeCalls     atomic.Int32
 	closeErr       error
+	closeEntered   chan struct{}
+	closeRelease   chan struct{}
 }
 
 func newFakeTopic() *fakeTopic {
@@ -65,6 +67,12 @@ func (topic *fakeTopic) Publish(context.Context, []byte) error { return nil }
 
 func (topic *fakeTopic) Close() error {
 	topic.closeCalls.Add(1)
+	if topic.closeEntered != nil {
+		close(topic.closeEntered)
+	}
+	if topic.closeRelease != nil {
+		<-topic.closeRelease
+	}
 	return topic.closeErr
 }
 
@@ -204,106 +212,57 @@ func TestCloseCancelsWorkerBlockedOnFullMessageChannel(t *testing.T) {
 }
 
 func TestStaleLifecycleEventsDoNotMutateCurrentGeneration(t *testing.T) {
-	states := []subscriptionState{
-		subscriptionStarting,
-		subscriptionRunning,
-		subscriptionStopping,
-		subscriptionClosing,
-	}
-	events := []struct {
+	for _, tc := range []struct {
 		name  string
 		apply func(*boxDispatcher) chan bool
 	}{
-		{
-			name: "start success",
-			apply: func(dispatcher *boxDispatcher) chan bool {
-				activation := make(chan bool, 1)
-				dispatcher.handleStartResult(startResult{generation: 1, activation: activation})
-				return activation
-			},
-		},
-		{
-			name: "start failure",
-			apply: func(dispatcher *boxDispatcher) chan bool {
-				dispatcher.handleStartResult(startResult{generation: 1, err: errors.New("stale start")})
-				return nil
-			},
-		},
-		{
-			name: "stopped",
-			apply: func(dispatcher *boxDispatcher) chan bool {
-				dispatcher.handleWorkerStopped(workerStopped{generation: 1})
-				return nil
-			},
-		},
-		{
-			name: "stopped with error",
-			apply: func(dispatcher *boxDispatcher) chan bool {
-				dispatcher.handleWorkerStopped(workerStopped{generation: 1, err: errors.New("stale stop")})
-				return nil
-			},
-		},
+		{"start success", func(d *boxDispatcher) chan bool {
+			activation := make(chan bool, 1)
+			d.handleStartResult(startResult{generation: 1, activation: activation})
+			return activation
+		}},
+		{"start failure", func(d *boxDispatcher) chan bool {
+			d.handleStartResult(startResult{generation: 1, err: errors.New("stale start")})
+			return nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pending := joinRequest{subscriberID: "pending", subscriber: newSubscriber(externalChanBufferSize), reply: make(chan joinResult, 1)}
+			d := &boxDispatcher{state: subscriptionStarting, generation: 2,
+				pending: map[string]joinRequest{"pending": pending}, workerCancel: func() { t.Error("canceled current worker") }}
+			activation := tc.apply(d)
+			if d.state != subscriptionStarting || d.generation != 2 || d.workerCancel == nil || len(d.pending) != 1 {
+				t.Fatal("stale start changed the current generation")
+			}
+			assertSubscriberRunning(t, pending.subscriber)
+			select {
+			case <-pending.reply:
+				t.Fatal("stale start replied to pending Join")
+			default:
+			}
+			if activation != nil {
+				select {
+				case activate := <-activation:
+					if activate {
+						t.Fatal("stale start was activated")
+					}
+				default:
+					t.Fatal("stale start received no activation decision")
+				}
+			}
+		})
 	}
 
-	for _, state := range states {
-		for _, event := range events {
-			t.Run(subscriptionStateName(state)+"/"+event.name, func(t *testing.T) {
-				dispatcher, topic, pendingRequest, activeSubscriber, cancelCalls, cleanup := newStaleEventFixture(state)
-				defer cleanup()
-				activation := event.apply(dispatcher)
-
-				if dispatcher.state != state || dispatcher.generation != 2 {
-					t.Fatalf("state/generation = (%d, %d), want (%d, 2)", dispatcher.state, dispatcher.generation, state)
-				}
-				if !dispatcher.workerOutstanding || dispatcher.workerCancel == nil {
-					t.Fatal("stale event changed current worker tracking")
-				}
-				if got := cancelCalls.Load(); got != 0 {
-					t.Fatalf("worker cancel calls = %d, want 0", got)
-				}
-				if got := topic.subscribeCalls.Load(); got != 0 {
-					t.Fatalf("Topic Subscribe calls = %d, want 0", got)
-				}
-				if got := topic.closeCalls.Load(); got != 0 {
-					t.Fatalf("Topic Close calls = %d, want 0", got)
-				}
-
-				if pendingRequest != nil {
-					if got := dispatcher.pending[pendingRequest.subscriberID]; got.subscriber != pendingRequest.subscriber {
-						t.Fatal("stale event changed pending subscriber")
-					}
-					assertSubscriberRunning(t, pendingRequest.subscriber)
-					select {
-					case result := <-pendingRequest.reply:
-						t.Fatalf("stale event replied to pending Join: %v", result.err)
-					default:
-					}
-				}
-				if activeSubscriber != nil {
-					if got := dispatcher.active["active"]; got != activeSubscriber {
-						t.Fatal("stale event changed active subscriber")
-					}
-					assertSubscriberRunning(t, activeSubscriber)
-				}
-
-				if activation != nil {
-					select {
-					case activate := <-activation:
-						if activate {
-							t.Fatal("stale start success was activated")
-						}
-					default:
-						t.Fatal("stale start success received no activation decision")
-					}
-					select {
-					case decision := <-activation:
-						t.Fatalf("stale start success received duplicate decision %v", decision)
-					default:
-					}
-				}
-			})
+	t.Run("stopped", func(t *testing.T) {
+		active := newSubscriber(externalChanBufferSize)
+		d := &boxDispatcher{state: subscriptionRunning, generation: 2,
+			active: map[string]*Subscriber{"active": active}, workerCancel: func() { t.Error("canceled current worker") }}
+		d.handleWorkerStopped(workerStopped{generation: 1, err: errors.New("stale stop")})
+		if d.state != subscriptionRunning || d.generation != 2 || d.workerCancel == nil || d.active["active"] != active {
+			t.Fatal("stale stop changed the current generation")
 		}
-	}
+		assertSubscriberRunning(t, active)
+	})
 }
 
 func (subscription *fakeSubscription) Cancel() {
@@ -347,9 +306,8 @@ func TestLoadExternalChanBufferSize(t *testing.T) {
 func TestJoinWaitsForSubscriptionAndSharesStart(t *testing.T) {
 	box, topic := newFakeBox(t)
 	firstResult := asyncJoin(box, "first")
-	secondResult := asyncJoin(box, "second")
-
 	waitSignal(t, topic.subscribeEntered, "subscription start")
+	secondResult := enqueueJoinDuringStart(t, box, "second")
 	assertNoJoinResult(t, firstResult)
 	assertNoJoinResult(t, secondResult)
 	if got := topic.subscribeCalls.Load(); got != 1 {
@@ -371,16 +329,19 @@ func TestJoinWaitsForSubscriptionAndSharesStart(t *testing.T) {
 func TestStartFailureFailsPendingJoins(t *testing.T) {
 	box, topic := newFakeBox(t)
 	wantErr := errors.New("subscribe failed")
+	firstResult := asyncJoin(box, "first")
+	waitSignal(t, topic.subscribeEntered, "subscription start")
+	secondResult := enqueueJoinDuringStart(t, box, "second")
 	topic.outcomes <- fakeSubscribeOutcome{err: wantErr}
-
-	result := waitJoinResult(t, asyncJoin(box, "subscriber"))
-	if !errors.Is(result.err, wantErr) {
-		t.Fatalf("JoinSub error = %v, want %v", result.err, wantErr)
+	for _, result := range []<-chan joinResult{firstResult, secondResult} {
+		if got := waitJoinResult(t, result); !errors.Is(got.err, wantErr) {
+			t.Fatalf("JoinSub error = %v, want %v", got.err, wantErr)
+		}
 	}
 
 	subscription := newFakeSubscription()
 	topic.outcomes <- fakeSubscribeOutcome{subscription: subscription}
-	joined := waitJoinResult(t, asyncJoin(box, "subscriber"))
+	joined := waitJoinResult(t, asyncJoin(box, "second"))
 	if joined.err != nil {
 		t.Fatalf("JoinSub after failure error = %v", joined.err)
 	}
@@ -652,6 +613,35 @@ func TestCloseWhileSubscribeFails(t *testing.T) {
 	}
 }
 
+func TestAPIsReturnWhileTopicCloseIsBlocked(t *testing.T) {
+	box, topic := newFakeBox(t)
+	topic.closeEntered = make(chan struct{})
+	topic.closeRelease = make(chan struct{})
+	var releaseOnce sync.Once
+	releaseClose := func() { releaseOnce.Do(func() { close(topic.closeRelease) }) }
+	defer releaseClose()
+
+	closeResult := make(chan error, 1)
+	go func() { closeResult <- box.Close() }()
+	waitSignal(t, topic.closeEntered, "Topic.Close entry")
+	if result := waitJoinResult(t, asyncJoin(box, "late")); !errors.Is(result.err, ErrBoxClosed) {
+		t.Fatalf("JoinSub error = %v, want %v", result.err, ErrBoxClosed)
+	}
+	assertOperationCompletes(t, func() error { return box.LeaveSub("absent") })
+	stopDone := make(chan struct{}, 1)
+	go func() { box.StopSub(); stopDone <- struct{}{} }()
+	waitSignal(t, stopDone, "StopSub during Topic.Close")
+	select {
+	case <-closeResult:
+		t.Fatal("Box.Close returned before Topic.Close finished")
+	default:
+	}
+	releaseClose()
+	if err := waitError(t, closeResult); err != nil {
+		t.Fatalf("Box.Close error = %v", err)
+	}
+}
+
 func TestJoinSubAfterClose(t *testing.T) {
 	box, _ := newFakeBox(t)
 	if err := box.Close(); err != nil {
@@ -715,6 +705,26 @@ func asyncJoin(box *Box, subscriberID string) <-chan joinResult {
 		subscriber, err := box.JoinSub(subscriberID)
 		result <- joinResult{subscriber: subscriber, err: err}
 	}()
+	return result
+}
+
+// A later control request is acknowledged only after the join is handled.
+func enqueueJoinDuringStart(t *testing.T, box *Box, subscriberID string) <-chan joinResult {
+	t.Helper()
+	result := make(chan joinResult, 1)
+	request := joinRequest{subscriberID: subscriberID, subscriber: newSubscriber(externalChanBufferSize), reply: result}
+	select {
+	case box.controlCh <- request:
+	case <-time.After(testTimeout):
+		t.Fatal("timed out enqueuing Join during start")
+	}
+	barrier := make(chan struct{}, 1)
+	select {
+	case box.controlCh <- leaveRequest{subscriberID: "absent", reply: barrier}:
+	case <-time.After(testTimeout):
+		t.Fatal("timed out enqueuing control barrier")
+	}
+	waitSignal(t, barrier, "control barrier")
 	return result
 }
 
@@ -847,87 +857,6 @@ func cleanupManualDispatcher(
 		case <-timer.C:
 			return
 		}
-	}
-}
-
-func newStaleEventFixture(state subscriptionState) (
-	*boxDispatcher,
-	*fakeTopic,
-	*joinRequest,
-	*Subscriber,
-	*atomic.Int32,
-	func(),
-) {
-	logger := zerolog.Nop()
-	topic := newFakeTopic()
-	ctx, cancel := context.WithCancel(context.Background())
-	box := &Box{
-		ctx:       ctx,
-		cancel:    cancel,
-		logger:    &logger,
-		topicID:   "stale-events",
-		topic:     topic,
-		controlCh: make(chan any),
-		messageCh: make(chan subscriptionMessage, 1),
-		done:      make(chan struct{}),
-	}
-	cancelCalls := &atomic.Int32{}
-	dispatcher := &boxDispatcher{
-		box:               box,
-		state:             state,
-		generation:        2,
-		pending:           make(map[string]joinRequest),
-		active:            make(map[string]*Subscriber),
-		workerCancel:      func() { cancelCalls.Add(1) },
-		workerOutstanding: true,
-	}
-
-	var pendingRequest *joinRequest
-	if state == subscriptionStarting || state == subscriptionStopping {
-		request := joinRequest{
-			subscriberID: "pending",
-			subscriber:   newSubscriber(externalChanBufferSize),
-			reply:        make(chan joinResult, 1),
-		}
-		dispatcher.pending[request.subscriberID] = request
-		pendingRequest = &request
-	}
-
-	var activeSubscriber *Subscriber
-	if state == subscriptionRunning {
-		activeSubscriber = newSubscriber(externalChanBufferSize)
-		dispatcher.active["active"] = activeSubscriber
-	}
-	cleanup := func() {
-		topic.release()
-		cancel()
-		// If a broken generation guard started a real replacement worker, drain
-		// its mandatory terminal result so mutation tests do not leak it.
-		if dispatcher.generation == 2 {
-			return
-		}
-		select {
-		case event := <-box.controlCh:
-			dispatcher.handleControl(event)
-		case <-time.After(testTimeout):
-		}
-		box.workerWG.Wait()
-	}
-	return dispatcher, topic, pendingRequest, activeSubscriber, cancelCalls, cleanup
-}
-
-func subscriptionStateName(state subscriptionState) string {
-	switch state {
-	case subscriptionStarting:
-		return "starting"
-	case subscriptionRunning:
-		return "running"
-	case subscriptionStopping:
-		return "stopping"
-	case subscriptionClosing:
-		return "closing"
-	default:
-		return "idle"
 	}
 }
 

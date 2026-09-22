@@ -158,8 +158,7 @@ type boxDispatcher struct {
 	pending    map[string]joinRequest
 	active     map[string]*Subscriber
 
-	workerCancel      context.CancelFunc
-	workerOutstanding bool
+	workerCancel context.CancelFunc
 }
 
 func (box *Box) runDispatcher() {
@@ -207,7 +206,7 @@ func (dispatcher *boxDispatcher) handleControl(event any) bool {
 		dispatcher.handleWorkerStopped(event)
 	}
 
-	if dispatcher.state != subscriptionClosing || dispatcher.workerOutstanding {
+	if dispatcher.state != subscriptionClosing || dispatcher.workerCancel != nil {
 		return false
 	}
 
@@ -292,7 +291,7 @@ func (dispatcher *boxDispatcher) handleClose() {
 		delete(dispatcher.active, subscriberID)
 		subscriber.stop(ErrBoxClosed)
 	}
-	if dispatcher.workerOutstanding && dispatcher.workerCancel != nil {
+	if dispatcher.workerCancel != nil {
 		dispatcher.workerCancel()
 	}
 }
@@ -306,7 +305,6 @@ func (dispatcher *boxDispatcher) handleStartResult(result startResult) {
 	}
 
 	if result.err != nil {
-		dispatcher.workerOutstanding = false
 		dispatcher.workerCancel = nil
 		switch dispatcher.state {
 		case subscriptionStarting:
@@ -340,7 +338,6 @@ func (dispatcher *boxDispatcher) handleWorkerStopped(stopped workerStopped) {
 	if stopped.generation != dispatcher.generation {
 		return
 	}
-	dispatcher.workerOutstanding = false
 	dispatcher.workerCancel = nil
 
 	switch dispatcher.state {
@@ -395,7 +392,6 @@ func (dispatcher *boxDispatcher) startGeneration() {
 	dispatcher.state = subscriptionStarting
 	workerCtx, cancel := context.WithCancel(context.Background())
 	dispatcher.workerCancel = cancel
-	dispatcher.workerOutstanding = true
 	dispatcher.box.startWorker(workerCtx, dispatcher.generation)
 }
 
@@ -481,14 +477,20 @@ func (box *Box) startWorker(ctx context.Context, generation uint64) {
 	}()
 }
 
+// StopSub stops current subscribers and cancels the current subscription.
+// Joins already pending during a stop remain pending for the next subscription.
+// It returns after the stop request is handled, before the worker necessarily exits.
 func (box *Box) StopSub() {
 	reply := make(chan struct{}, 1)
 	select {
+	case <-box.ctx.Done():
+		return
 	case <-box.done:
 		return
 	case box.controlCh <- stopRequest{reply: reply}:
 	}
 	select {
+	case <-box.ctx.Done():
 	case <-box.done:
 	case <-reply:
 	}
@@ -523,6 +525,9 @@ func (box *Box) JoinSub(subscriberID string) (*Subscriber, error) {
 	request := joinRequest{subscriberID: subscriberID, subscriber: subscriber, reply: reply}
 
 	select {
+	case <-box.ctx.Done():
+		subscriber.stop(ErrBoxClosed)
+		return nil, ErrBoxClosed
 	case <-box.done:
 		subscriber.stop(ErrBoxClosed)
 		return nil, ErrBoxClosed
@@ -530,6 +535,9 @@ func (box *Box) JoinSub(subscriberID string) (*Subscriber, error) {
 	}
 
 	select {
+	case <-box.ctx.Done():
+		subscriber.stop(ErrBoxClosed)
+		return nil, ErrBoxClosed
 	case <-box.done:
 		subscriber.stop(ErrBoxClosed)
 		return nil, ErrBoxClosed
@@ -545,11 +553,15 @@ func (box *Box) LeaveSub(subscriberID string) error {
 	reply := make(chan struct{}, 1)
 	request := leaveRequest{subscriberID: subscriberID, reply: reply}
 	select {
+	case <-box.ctx.Done():
+		return nil
 	case <-box.done:
 		return nil
 	case box.controlCh <- request:
 	}
 	select {
+	case <-box.ctx.Done():
+		return nil
 	case <-box.done:
 		return nil
 	case <-reply:
