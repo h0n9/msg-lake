@@ -52,21 +52,3 @@ func (subscriber *Subscriber) stop(err error) {
 		close(subscriber.done)
 	})
 }
-
-type setSubscriber struct {
-	subscriberID string
-	subscriber   *Subscriber
-
-	errCh chan error
-}
-
-type deleteSubscriber struct {
-	subscriberID string
-
-	errCh chan error
-}
-
-type (
-	setSubscriberCh    chan setSubscriber
-	deleteSubscriberCh chan deleteSubscriber
-)
