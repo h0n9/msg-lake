@@ -167,12 +167,9 @@ func shutdownStart(signalAt <-chan time.Time) time.Time {
 	}
 }
 
-type shutdownLifecycle interface {
+type shutdownTarget interface {
 	BeginShutdown()
-	WaitPublishes()
-	WaitHandlers()
-	WaitSenders()
-	CloseBackend() error
+	Close() error
 	CancelBackend()
 }
 
@@ -181,22 +178,17 @@ type grpcLifecycle interface {
 	Stop()
 }
 
-func shutdownService(service shutdownLifecycle, server grpcLifecycle, at time.Time) error {
+func shutdownService(service shutdownTarget, server grpcLifecycle, at time.Time) error {
 	return shutdownServiceWithin(service, server, at, shutdownTimeout)
 }
 
-func shutdownServiceWithin(service shutdownLifecycle, server grpcLifecycle, at time.Time, timeout time.Duration) error {
+func shutdownServiceWithin(service shutdownTarget, server grpcLifecycle, at time.Time, timeout time.Duration) error {
 	deadline := at.Add(timeout)
 	service.BeginShutdown()
 	grpcDone := make(chan struct{})
 	go func() { server.GracefulStop(); close(grpcDone) }()
 	cleanupDone := make(chan error, 1)
-	go func() {
-		service.WaitPublishes()
-		service.WaitHandlers()
-		service.WaitSenders()
-		cleanupDone <- service.CloseBackend()
-	}()
+	go func() { cleanupDone <- service.Close() }()
 	timer := time.NewTimer(time.Until(deadline))
 	defer timer.Stop()
 	var cleanupErr error

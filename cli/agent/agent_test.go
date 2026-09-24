@@ -18,12 +18,9 @@ type blockedLifecycle struct {
 	closeErr  error
 }
 
-func (s *blockedLifecycle) BeginShutdown()      {}
-func (s *blockedLifecycle) WaitPublishes()      { <-s.publishes }
-func (s *blockedLifecycle) WaitHandlers()       {}
-func (s *blockedLifecycle) WaitSenders()        {}
-func (s *blockedLifecycle) CloseBackend() error { s.closed.Store(true); return s.closeErr }
-func (s *blockedLifecycle) CancelBackend()      { s.canceled.Store(true) }
+func (s *blockedLifecycle) BeginShutdown() {}
+func (s *blockedLifecycle) Close() error   { <-s.publishes; s.closed.Store(true); return s.closeErr }
+func (s *blockedLifecycle) CancelBackend() { s.canceled.Store(true) }
 
 type blockedGRPC struct {
 	stopCalled      chan bool

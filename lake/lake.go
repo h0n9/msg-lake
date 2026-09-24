@@ -63,7 +63,10 @@ func (service *Service) Close() error {
 	service.publishes.Wait()
 	service.handlers.Wait()
 	service.senders.Wait()
-	return service.CloseBackend()
+	if service.relayer != nil {
+		return service.relayer.Close()
+	}
+	return nil
 }
 
 func (service *Service) BeginShutdown() {
@@ -75,15 +78,6 @@ func (service *Service) BeginShutdown() {
 	service.mu.Unlock()
 }
 
-func (service *Service) WaitPublishes() { service.publishes.Wait() }
-func (service *Service) WaitHandlers()  { service.handlers.Wait() }
-func (service *Service) WaitSenders()   { service.senders.Wait() }
-func (service *Service) CloseBackend() error {
-	if service.relayer != nil {
-		return service.relayer.Close()
-	}
-	return nil
-}
 func (service *Service) CancelBackend() {
 	if service.relayer != nil {
 		service.relayer.CancelBackend()

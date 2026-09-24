@@ -28,17 +28,15 @@ type Center struct {
 	ps          *pubsub.PubSub
 	createBoxFn func(string) (*Box, error)
 	mu          sync.RWMutex
-	boxes       map[string]*Box
 	entries     map[string]*topicEntry
 	closed      bool
 	closeOnce   sync.Once
-	closeDone   chan struct{}
 	closeErr    error
 }
 
 func NewCenter(ctx context.Context, logger *zerolog.Logger, ps *pubsub.PubSub) *Center {
 	subLogger := logger.With().Str("module", "msg-center").Logger()
-	return &Center{ctx: ctx, logger: &subLogger, ps: ps, boxes: make(map[string]*Box), entries: make(map[string]*topicEntry), closeDone: make(chan struct{})}
+	return &Center{ctx: ctx, logger: &subLogger, ps: ps, entries: make(map[string]*topicEntry)}
 }
 
 func (center *Center) GetBox(topicID string) (*Box, error) {
@@ -48,12 +46,7 @@ func (center *Center) GetBox(topicID string) (*Box, error) {
 			center.mu.Unlock()
 			return nil, ErrCenterClosed
 		}
-		// Support the existing populated-box fast path used by callers and benchmarks.
 		if center.entries == nil {
-			if box := center.boxes[topicID]; box != nil {
-				center.mu.Unlock()
-				return box, nil
-			}
 			center.entries = make(map[string]*topicEntry)
 		}
 		entry := center.entries[topicID]
@@ -68,9 +61,6 @@ func (center *Center) GetBox(topicID string) (*Box, error) {
 			box, err := create(topicID)
 			center.mu.Lock()
 			entry.box, entry.err = box, err
-			if err == nil {
-				center.boxes[topicID] = box
-			}
 			close(entry.ready)
 			if err != nil {
 				if !entry.closing {
@@ -146,7 +136,6 @@ func (center *Center) cleanupEntry(topicID string, entry *topicEntry) error {
 		}
 		center.mu.Lock()
 		if center.entries[topicID] == entry {
-			delete(center.boxes, topicID)
 			if entry.cleanupErr == nil {
 				delete(center.entries, topicID)
 			}
@@ -198,12 +187,6 @@ func (center *Center) Close() error {
 		for err := range errorsCh {
 			center.closeErr = errors.Join(center.closeErr, err)
 		}
-		if center.closeDone != nil {
-			close(center.closeDone)
-		}
 	})
-	if center.closeDone != nil {
-		<-center.closeDone
-	}
 	return center.closeErr
 }

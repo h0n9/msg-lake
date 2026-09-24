@@ -107,7 +107,7 @@ func TestShutdownRejectsRequestsAndReleasesBlockedHandler(t *testing.T) {
 	}
 	close(stream.sendRelease)
 	senderDone := make(chan struct{})
-	go func() { service.WaitSenders(); close(senderDone) }()
+	go func() { service.senders.Wait(); close(senderDone) }()
 	select {
 	case <-senderDone:
 	case <-time.After(time.Second):
@@ -176,8 +176,8 @@ func TestGracefulShutdownSendsStreamEOF(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("GracefulStop blocked")
 	}
-	service.WaitHandlers()
-	service.WaitSenders()
+	service.handlers.Wait()
+	service.senders.Wait()
 }
 
 func TestShutdownMapsBoxClosedToEOFButKeepsSendError(t *testing.T) {
@@ -260,7 +260,7 @@ func TestShutdownReleasesHandlerDuringBlockedRelaySend(t *testing.T) {
 	}
 	close(stream.relayRelease)
 	senderDone := make(chan struct{})
-	go func() { service.WaitSenders(); close(senderDone) }()
+	go func() { service.senders.Wait(); close(senderDone) }()
 	select {
 	case <-senderDone:
 	case <-time.After(time.Second):
@@ -298,7 +298,7 @@ func TestAcceptedPublishDrainsDuringShutdownWhileGetBoxBlocks(t *testing.T) {
 	}
 	service.BeginShutdown()
 	drained := make(chan struct{})
-	go func() { service.WaitPublishes(); close(drained) }()
+	go func() { service.publishes.Wait(); close(drained) }()
 	select {
 	case <-drained:
 		t.Fatal("Publish drain finished before GetBox")

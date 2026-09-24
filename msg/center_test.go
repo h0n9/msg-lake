@@ -100,12 +100,12 @@ func BenchmarkMapLookupExisting(b *testing.B) {
 func BenchmarkCenterGetBoxExisting(b *testing.B) {
 	for _, topicCount := range []int{1, 100, 10_000} {
 		b.Run(fmt.Sprintf("topics=%d", topicCount), func(b *testing.B) {
-			center := &Center{boxes: make(map[string]*Box, topicCount)}
+			center := &Center{entries: make(map[string]*topicEntry, topicCount)}
 			topicIDs := make([]string, topicCount)
 			for i := range topicCount {
 				topicID := fmt.Sprintf("topic-%d", i)
 				topicIDs[i] = topicID
-				center.boxes[topicID] = &Box{topicID: topicID}
+				center.entries[topicID] = completedEntry(&Box{topicID: topicID})
 			}
 
 			b.ReportAllocs()
@@ -123,12 +123,12 @@ func BenchmarkCenterGetBoxExisting(b *testing.B) {
 func BenchmarkCenterGetBoxExistingParallel(b *testing.B) {
 	for _, topicCount := range []int{1, 100, 10_000} {
 		b.Run(fmt.Sprintf("topics=%d", topicCount), func(b *testing.B) {
-			center := &Center{boxes: make(map[string]*Box, topicCount)}
+			center := &Center{entries: make(map[string]*topicEntry, topicCount)}
 			topicIDs := make([]string, topicCount)
 			for i := range topicCount {
 				topicID := fmt.Sprintf("topic-%d", i)
 				topicIDs[i] = topicID
-				center.boxes[topicID] = &Box{topicID: topicID}
+				center.entries[topicID] = completedEntry(&Box{topicID: topicID})
 			}
 
 			b.ReportAllocs()
@@ -215,7 +215,7 @@ func TestCenterCreationFailureWhileLeaveWaits(t *testing.T) {
 	want := errors.New("creation failed")
 	entered := make(chan struct{})
 	release := make(chan struct{})
-	center := &Center{boxes: make(map[string]*Box), entries: make(map[string]*topicEntry), closeDone: make(chan struct{})}
+	center := &Center{entries: make(map[string]*topicEntry)}
 	center.createBoxFn = func(string) (*Box, error) { close(entered); <-release; return nil, want }
 	created := make(chan error, 1)
 	go func() { _, err := center.GetBox("topic"); created <- err }()
@@ -250,17 +250,22 @@ func TestCenterCreationFailureWhileLeaveWaits(t *testing.T) {
 }
 
 func TestStaleCleanupDoesNotDeleteReplacementBox(t *testing.T) {
-	center := &Center{boxes: make(map[string]*Box), entries: make(map[string]*topicEntry)}
+	center := &Center{entries: make(map[string]*topicEntry)}
 	replacement := &Box{topicID: "topic"}
 	current := &topicEntry{ready: make(chan struct{}), done: make(chan struct{}), box: replacement}
 	center.entries["topic"] = current
-	center.boxes["topic"] = replacement
 	stale := &topicEntry{ready: make(chan struct{}), done: make(chan struct{}), err: errors.New("old creation failed")}
 	close(stale.ready)
 	if err := center.cleanupEntry("topic", stale); !errors.Is(err, stale.err) {
 		t.Fatalf("cleanup error = %v", err)
 	}
-	if center.boxes["topic"] != replacement || center.entries["topic"] != current {
+	if center.entries["topic"] != current || center.entries["topic"].box != replacement {
 		t.Fatal("stale cleanup removed replacement box")
 	}
+}
+
+func completedEntry(box *Box) *topicEntry {
+	ready := make(chan struct{})
+	close(ready)
+	return &topicEntry{ready: ready, done: make(chan struct{}), box: box}
 }
