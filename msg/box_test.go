@@ -3,6 +3,7 @@ package msg
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -866,5 +867,112 @@ func assertSubscriberRunning(t *testing.T, subscriber *Subscriber) {
 	case <-subscriber.Done():
 		t.Fatalf("subscriber stopped with error %v", subscriber.Err())
 	default:
+	}
+}
+
+func TestJoinSubContextReturnsBeforeBlockedStartAndReclaimsRequest(t *testing.T) {
+	logger := zerolog.Nop()
+	topic := newFakeTopic()
+	box, err := newBoxWithBackend(&logger, "cancel-pending", topic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() { _, err := box.JoinSubContext(ctx, "same-id"); result <- err }()
+	select {
+	case <-topic.subscribeEntered:
+	case <-time.After(testTimeout):
+		t.Fatal("subscription did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("JoinSubContext error = %v", err)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("canceled join blocked on Subscribe")
+	}
+	topic.outcomes <- fakeSubscribeOutcome{subscription: newFakeSubscription()}
+	topic.outcomes <- fakeSubscribeOutcome{subscription: newFakeSubscription()}
+	// The dispatcher processes the cancellation even when Subscribe completes late.
+	deadline := time.After(testTimeout)
+	for {
+		joined := make(chan error, 1)
+		go func() {
+			sub, err := box.JoinSub("same-id")
+			if err == nil {
+				_ = box.LeaveSub("same-id")
+				_ = sub
+			}
+			joined <- err
+		}()
+		select {
+		case err := <-joined:
+			if err == nil {
+				topic.release()
+				if err := box.Close(); err != nil {
+					t.Fatal(err)
+				}
+				return
+			}
+			if !strings.Contains(err.Error(), "already subscribing") {
+				t.Fatalf("new join error = %v", err)
+			}
+		case <-deadline:
+			topic.release()
+			t.Fatal("new join did not complete")
+		}
+	}
+}
+
+func TestCancelJoinMatchesSubscriberIdentity(t *testing.T) {
+	logger := zerolog.Nop()
+	d := boxDispatcher{box: &Box{logger: &logger, topicID: "identity"}, state: subscriptionRunning, active: map[string]*Subscriber{"same": newSubscriber(1)}, pending: make(map[string]joinRequest)}
+	current := d.active["same"]
+	d.handleCancelJoin(cancelJoinRequest{subscriberID: "same", subscriber: newSubscriber(1)})
+	if d.active["same"] != current {
+		t.Fatal("stale cancellation removed replacement subscriber")
+	}
+}
+
+func TestCanceledLastPendingJoinDoesNotKeepWorkerRunning(t *testing.T) {
+	logger := zerolog.Nop()
+	topic := newFakeTopic()
+	box, err := newBoxWithBackend(&logger, "last-pending", topic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	joined := make(chan error, 1)
+	go func() { _, err := box.JoinSubContext(ctx, "only"); joined <- err }()
+	select {
+	case <-topic.subscribeEntered:
+	case <-time.After(testTimeout):
+		t.Fatal("Subscribe did not begin")
+	}
+	cancel()
+	select {
+	case err := <-joined:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("join error = %v", err)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("join did not cancel")
+	}
+	first := newFakeSubscription()
+	topic.outcomes <- fakeSubscribeOutcome{subscription: first}
+	select {
+	case <-first.canceled:
+	case <-time.After(testTimeout):
+		t.Fatal("orphan worker was not canceled")
+	}
+	if calls := topic.subscribeCalls.Load(); calls != 1 {
+		t.Fatalf("Subscribe calls = %d, want 1", calls)
+	}
+	topic.release()
+	if err := box.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -83,6 +83,12 @@ type joinRequest struct {
 	subscriberID string
 	subscriber   *Subscriber
 	reply        chan joinResult
+	ctx          context.Context
+}
+
+type cancelJoinRequest struct {
+	subscriberID string
+	subscriber   *Subscriber
 }
 
 type leaveRequest struct {
@@ -194,6 +200,8 @@ func (dispatcher *boxDispatcher) handleControl(event any) bool {
 	switch event := event.(type) {
 	case joinRequest:
 		dispatcher.handleJoin(event)
+	case cancelJoinRequest:
+		dispatcher.handleCancelJoin(event)
 	case leaveRequest:
 		dispatcher.handleLeave(event)
 	case stopRequest:
@@ -219,6 +227,11 @@ func (dispatcher *boxDispatcher) handleControl(event any) bool {
 }
 
 func (dispatcher *boxDispatcher) handleJoin(request joinRequest) {
+	if request.ctx != nil && request.ctx.Err() != nil {
+		request.subscriber.stop(request.ctx.Err())
+		request.reply <- joinResult{err: request.ctx.Err()}
+		return
+	}
 	if dispatcher.state == subscriptionClosing {
 		request.subscriber.stop(ErrBoxClosed)
 		request.reply <- joinResult{err: ErrBoxClosed}
@@ -242,6 +255,24 @@ func (dispatcher *boxDispatcher) handleJoin(request joinRequest) {
 	case subscriptionRunning:
 		dispatcher.active[request.subscriberID] = request.subscriber
 		request.reply <- joinResult{subscriber: request.subscriber}
+	}
+}
+
+func (dispatcher *boxDispatcher) handleCancelJoin(request cancelJoinRequest) {
+	if pending, ok := dispatcher.pending[request.subscriberID]; ok && pending.subscriber == request.subscriber {
+		delete(dispatcher.pending, request.subscriberID)
+		pending.subscriber.stop(context.Canceled)
+		pending.reply <- joinResult{err: context.Canceled}
+		if len(dispatcher.pending) == 0 && dispatcher.state == subscriptionStarting {
+			dispatcher.beginStopping()
+		}
+	}
+	if active, ok := dispatcher.active[request.subscriberID]; ok && active == request.subscriber {
+		delete(dispatcher.active, request.subscriberID)
+		active.stop(context.Canceled)
+		if len(dispatcher.active) == 0 && dispatcher.state == subscriptionRunning {
+			dispatcher.beginStopping()
+		}
 	}
 }
 
@@ -320,6 +351,18 @@ func (dispatcher *boxDispatcher) handleStartResult(result startResult) {
 
 	switch dispatcher.state {
 	case subscriptionStarting:
+		for subscriberID, request := range dispatcher.pending {
+			if request.ctx != nil && request.ctx.Err() != nil {
+				delete(dispatcher.pending, subscriberID)
+				request.subscriber.stop(request.ctx.Err())
+				request.reply <- joinResult{err: request.ctx.Err()}
+			}
+		}
+		if len(dispatcher.pending) == 0 {
+			dispatcher.beginStopping()
+			result.activation <- false
+			return
+		}
 		dispatcher.state = subscriptionRunning
 		result.activation <- true
 		for subscriberID, request := range dispatcher.pending {
@@ -520,11 +563,21 @@ func (box *Box) Publish(msgCapsule *pb.SignedMsgCapsule) error {
 }
 
 func (box *Box) JoinSub(subscriberID string) (*Subscriber, error) {
+	return box.JoinSubContext(context.Background(), subscriberID)
+}
+
+func (box *Box) JoinSubContext(ctx context.Context, subscriberID string) (*Subscriber, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	subscriber := newSubscriber(externalChanBufferSize)
 	reply := make(chan joinResult, 1)
-	request := joinRequest{subscriberID: subscriberID, subscriber: subscriber, reply: reply}
+	request := joinRequest{subscriberID: subscriberID, subscriber: subscriber, reply: reply, ctx: ctx}
 
 	select {
+	case <-ctx.Done():
+		subscriber.stop(ctx.Err())
+		return nil, ctx.Err()
 	case <-box.ctx.Done():
 		subscriber.stop(ErrBoxClosed)
 		return nil, ErrBoxClosed
@@ -535,6 +588,15 @@ func (box *Box) JoinSub(subscriberID string) (*Subscriber, error) {
 	}
 
 	select {
+	case <-ctx.Done():
+		subscriber.stop(ctx.Err())
+		go func() {
+			select {
+			case box.controlCh <- cancelJoinRequest{subscriberID: subscriberID, subscriber: subscriber}:
+			case <-box.done:
+			}
+		}()
+		return nil, ctx.Err()
 	case <-box.ctx.Done():
 		subscriber.stop(ErrBoxClosed)
 		return nil, ErrBoxClosed
@@ -544,6 +606,15 @@ func (box *Box) JoinSub(subscriberID string) (*Subscriber, error) {
 	case result := <-reply:
 		if result.err != nil {
 			return nil, result.err
+		}
+		if err := ctx.Err(); err != nil {
+			go func() {
+				select {
+				case box.controlCh <- cancelJoinRequest{subscriberID: subscriberID, subscriber: subscriber}:
+				case <-box.done:
+				}
+			}()
+			return nil, err
 		}
 		return result.subscriber, nil
 	}
