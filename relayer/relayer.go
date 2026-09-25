@@ -2,6 +2,8 @@ package relayer
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
@@ -27,23 +29,27 @@ const (
 )
 
 type Relayer struct {
-	ctx    context.Context
-	logger *zerolog.Logger
+	ctx       context.Context
+	cancel    context.CancelFunc
+	closeOnce sync.Once
+	closeErr  error
+	logger    *zerolog.Logger
 
 	privKey *crypto.PrivKey
 	pubKey  *crypto.PubKey
 
-	h         host.Host
+	host      host.Host
 	msgCenter *msg.Center
 
 	mdnsSvc  mdns.Service
 	peerChan <-chan peer.AddrInfo
 
-	d *dht.IpfsDHT
+	kadDHT *dht.IpfsDHT
 }
 
 func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs []string, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Relayer, error) {
 	subLogger := logger.With().Str("module", "relayer").Logger()
+	backendCtx, backendCancel := context.WithCancel(ctx)
 
 	var (
 		privKey *crypto.PrivKey
@@ -51,87 +57,99 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs 
 	)
 	privKey, err = crypto.GenPrivKey()
 	if err != nil {
+		backendCancel()
 		return nil, err
 	}
 	if len(seed) > 0 {
 		privKey, err = crypto.GenPrivKeyFromSeed(seed)
 		if err != nil {
+			backendCancel()
 			return nil, err
 		}
 	}
 	subLogger.Info().Msg("generated key pair for libp2p host")
 
-	h, err := newHost(addrs, privKey)
+	p2pHost, err := newHost(addrs, privKey)
 	if err != nil {
+		backendCancel()
 		return nil, err
 	}
 	subLogger.Info().Msg("initialized libp2p host")
 
 	// convert string formatted bootstrap peer addrs to peer.AddrInfo
-	pis := []peer.AddrInfo{}
+	bootstrapPeerInfos := []peer.AddrInfo{}
 	for _, addr := range bootstrapPeers {
-		pi, err := peer.AddrInfoFromString(addr)
+		peerInfo, err := peer.AddrInfoFromString(addr)
 		if err != nil {
 			logger.Err(err).Str("addr", addr).Msg("")
 			continue
 		}
-		pis = append(pis, *pi)
+		bootstrapPeerInfos = append(bootstrapPeerInfos, *peerInfo)
 	}
 
 	relayer := Relayer{
-		ctx:    ctx,
+		ctx:    backendCtx,
+		cancel: backendCancel,
 		logger: &subLogger,
 
 		privKey: privKey,
 		pubKey:  privKey.PubKey(),
 
-		h: h,
+		host: p2pHost,
 	}
+	initialized := false
+	defer func() {
+		if !initialized {
+			relayer.Close()
+		}
+	}()
 
 	// init mdns service
 	if mdnsEnabled {
-		dn := newDiscoveryNotifee()
-		svc := mdns.NewMdnsService(h, mdnsServiceName, dn)
-		err = svc.Start()
+		discoveryNotifee := newDiscoveryNotifee(backendCtx)
+		mdnsService := mdns.NewMdnsService(p2pHost, mdnsServiceName, discoveryNotifee)
+		relayer.mdnsSvc = mdnsService
+		err = mdnsService.Start()
 		if err != nil {
 			return nil, err
 		}
-		relayer.mdnsSvc = svc
-		relayer.peerChan = dn.peerChan
+		relayer.peerChan = discoveryNotifee.peerChan
 		subLogger.Info().Msg("initialized mdns service")
 	}
 
 	// init kad dht
 	if dhtEnabled {
-		d, err := dht.New(
-			ctx,
-			h,
-			dht.BootstrapPeers(pis...),
+		kadDHT, err := dht.New(
+			backendCtx,
+			p2pHost,
+			dht.BootstrapPeers(bootstrapPeerInfos...),
 			dht.Mode(dht.ModeServer),
 		)
 		if err != nil {
 			return nil, err
 		}
-		d.RoutingTable().PeerAdded = func(pi peer.ID) {
-			subLogger.Info().Str("peer", pi.String()).Msg("connected")
+		kadDHT.RoutingTable().PeerAdded = func(peerID peer.ID) {
+			subLogger.Info().Str("peer", peerID.String()).Msg("connected")
 		}
-		d.RoutingTable().PeerRemoved = func(pi peer.ID) {
-			subLogger.Info().Str("peer", pi.String()).Msg("disconnected")
+		kadDHT.RoutingTable().PeerRemoved = func(peerID peer.ID) {
+			subLogger.Info().Str("peer", peerID.String()).Msg("disconnected")
 		}
-		relayer.d = d
+		relayer.kadDHT = kadDHT
 		subLogger.Info().Msg("initialized libp2p kad dht")
 
-		d.Bootstrap(ctx)
+		if err := kadDHT.Bootstrap(backendCtx); err != nil {
+			return nil, err
+		}
 		subLogger.Info().Msg("bootstrapped libp2p kad dht")
 	}
 
-	subLogger.Info().Msgf("listening address %v", h.Addrs())
-	subLogger.Info().Msgf("libp2p peer ID %s", h.ID())
+	subLogger.Info().Msgf("listening address %v", p2pHost.Addrs())
+	subLogger.Info().Msgf("libp2p peer ID %s", p2pHost.ID())
 
 	// TODO: make this options customizable with external config file
 	ps, err := pubsub.NewGossipSub(
-		ctx,
-		h,
+		backendCtx,
+		p2pHost,
 		pubsub.WithGossipSubProtocols(
 			[]protocol.ID{protocolID},
 			func(_ pubsub.GossipSubFeature, id protocol.ID) bool {
@@ -148,42 +166,66 @@ func NewRelayer(ctx context.Context, logger *zerolog.Logger, seed []byte, addrs 
 	if err != nil {
 		return nil, err
 	}
-	relayer.msgCenter = msg.NewCenter(ctx, &subLogger, ps)
+	relayer.msgCenter = msg.NewCenter(backendCtx, &subLogger, ps)
 	subLogger.Info().Str("protocol-id", string(protocolID)).Msg("initialized gossip sub")
 
+	initialized = true
 	return &relayer, nil
 }
 
-func (relayer *Relayer) Close() {
+func (relayer *Relayer) Close() error {
+	relayer.closeOnce.Do(relayer.close)
+	return relayer.closeErr
+}
+
+func (relayer *Relayer) close() {
+	if relayer.msgCenter != nil {
+		if err := relayer.msgCenter.Close(); err != nil {
+			relayer.closeErr = errors.Join(relayer.closeErr, err)
+			relayer.logger.Err(err).Msg("closing msg center")
+		}
+	}
+	relayer.cancel()
 	if relayer.mdnsSvc != nil {
 		err := relayer.mdnsSvc.Close()
 		if err != nil {
+			relayer.closeErr = errors.Join(relayer.closeErr, err)
 			relayer.logger.Err(err).Msg("")
 		}
 		relayer.logger.Info().Msg("closed mdns service")
 	}
-	if relayer.d != nil {
-		err := relayer.d.Close()
+	if relayer.kadDHT != nil {
+		err := relayer.kadDHT.Close()
 		if err != nil {
+			relayer.closeErr = errors.Join(relayer.closeErr, err)
 			relayer.logger.Err(err).Msg("")
 		}
 		relayer.logger.Info().Msg("closed kad dht")
 	}
-	err := relayer.h.Close()
+	err := relayer.host.Close()
 	if err != nil {
+		relayer.closeErr = errors.Join(relayer.closeErr, err)
 		relayer.logger.Err(err).Msg("")
 	}
 	relayer.logger.Info().Msg("closed relayer")
 }
 
 func (relayer *Relayer) DiscoverPeers() error {
+	if relayer.peerChan == nil {
+		return nil
+	}
 	for {
 		relayer.logger.Info().Msg("waiting peers")
-		peer := <-relayer.peerChan // blocks until discover new peers
+		var peer peer.AddrInfo
+		select {
+		case <-relayer.ctx.Done():
+			return nil
+		case peer = <-relayer.peerChan:
+		}
 		relayer.logger.Info().Str("peer", peer.String()).Msg("found")
 
 		relayer.logger.Info().Str("peer", peer.String()).Msg("connecting")
-		err := relayer.h.Connect(relayer.ctx, peer)
+		err := relayer.host.Connect(relayer.ctx, peer)
 		if err != nil {
 			relayer.logger.Err(err).Str("peer", peer.String()).Msg("")
 			continue
@@ -198,18 +240,26 @@ func (relayer *Relayer) GetMsgCenter() *msg.Center {
 
 type discoveryNotifee struct {
 	peerChan chan peer.AddrInfo
+	ctx      context.Context
 }
 
-func newDiscoveryNotifee() *discoveryNotifee {
+func newDiscoveryNotifee(ctx context.Context) *discoveryNotifee {
 	return &discoveryNotifee{
-		peerChan: make(chan peer.AddrInfo),
+		peerChan: make(chan peer.AddrInfo, 64),
+		ctx:      ctx,
 	}
 }
 
 // interface to be called when new  peer is found
-func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
-	n.peerChan <- pi
+func (n *discoveryNotifee) HandlePeerFound(peerInfo peer.AddrInfo) {
+	select {
+	case n.peerChan <- peerInfo:
+	case <-n.ctx.Done():
+	default: // Discovery hints may be dropped when Connect cannot keep up.
+	}
 }
+
+func (relayer *Relayer) CancelBackend() { relayer.cancel() }
 
 func newHost(addrs []string, privKey *crypto.PrivKey) (host.Host, error) {
 	listenAddrs, err := generateListenAddrs(addrs)

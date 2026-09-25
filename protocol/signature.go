@@ -25,9 +25,8 @@ func MsgCapsuleSigningBytes(msgCapsule *pb.MsgCapsule) ([]byte, error) {
 	return data, nil
 }
 
-// SubscribeSigningBytes returns the UTF-8 bytes covered by a subscribe
-// signature. Go strings already contain UTF-8 bytes without an extra encoding
-// step.
+// SubscribeSigningBytes returns the topic ID bytes covered by a subscribe
+// signature without an additional encoding step.
 func SubscribeSigningBytes(topicID string) []byte {
 	return []byte(topicID)
 }

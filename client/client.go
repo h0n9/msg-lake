@@ -69,7 +69,7 @@ func (c *Client) Close() {
 }
 
 // Subscribe() subscribes to a topic
-func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandler func(*pb.TimestampedSignedMsgCapsule) error) error {
+func (c *Client) Subscribe(ctx context.Context, topicID string, timestampedMsgCapsuleHandler func(*pb.TimestampedSignedMsgCapsule) error) error {
 	// sign the UTF-8 bytes of topicID
 	sigDataBytes, err := c.privKey.Sign(protocol.SubscribeSigningBytes(topicID))
 	if err != nil {
@@ -88,7 +88,7 @@ func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandle
 		return err
 	}
 
-	// block until recieve subscribe ack msg
+	// block until receive subscribe ack msg
 	subRes, err := stream.Recv()
 	if err != nil {
 		return err
@@ -117,20 +117,20 @@ func (c *Client) Subscribe(ctx context.Context, topicID string, msgCapsuleHandle
 				continue
 			}
 
-			// get a msgCapsule from the received message
-			msgCapsule := res.GetTimestampedSignedMsgCapsule()
+			// get a timestamped capsule from the received message
+			timestamped := res.GetTimestampedSignedMsgCapsule()
 
-			if msgCapsule == nil {
+			if timestamped == nil {
 				continue
 			}
 			if c.verifyReceivedMessages {
-				if err := protocol.VerifyTimestampedSignedMsgCapsule(msgCapsule, topicID); err != nil {
+				if err := protocol.VerifyTimestampedSignedMsgCapsule(timestamped, topicID); err != nil {
 					return fmt.Errorf("verify received msg capsule: %w", err)
 				}
 			}
 
-			// handle the received msgCapsule
-			err = msgCapsuleHandler(msgCapsule)
+			// handle the received timestamped capsule
+			err = timestampedMsgCapsuleHandler(timestamped)
 			if err != nil {
 				fmt.Println(err)
 			}
