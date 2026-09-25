@@ -36,7 +36,12 @@ type Center struct {
 
 func NewCenter(ctx context.Context, logger *zerolog.Logger, ps *pubsub.PubSub) *Center {
 	subLogger := logger.With().Str("module", "msg-center").Logger()
-	return &Center{ctx: ctx, logger: &subLogger, ps: ps, entries: make(map[string]*topicEntry)}
+	return &Center{
+		ctx:     ctx,
+		logger:  &subLogger,
+		ps:      ps,
+		entries: make(map[string]*topicEntry),
+	}
 }
 
 func (center *Center) GetBox(topicID string) (*Box, error) {

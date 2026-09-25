@@ -176,7 +176,7 @@ func TestGracefulShutdownSendsStreamEOF(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("GracefulStop blocked")
 	}
-	service.handlers.Wait()
+	service.subscribeHandlers.Wait()
 	service.senders.Wait()
 }
 

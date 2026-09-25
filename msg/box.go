@@ -550,10 +550,10 @@ func (box *Box) Close() error {
 	return box.closeErr
 }
 
-func (box *Box) Publish(msgCapsule *pb.SignedMsgCapsule) error {
+func (box *Box) Publish(signedMsgCapsule *pb.SignedMsgCapsule) error {
 	timestamped := &pb.TimestampedSignedMsgCapsule{
 		Timestamp:        time.Now().UnixNano(),
-		SignedMsgCapsule: msgCapsule,
+		SignedMsgCapsule: signedMsgCapsule,
 	}
 	data, err := proto.Marshal(timestamped)
 	if err != nil {

@@ -29,16 +29,16 @@ const (
 type Service struct {
 	pb.UnimplementedMsgLakeServer
 
-	ctx          context.Context
-	logger       *zerolog.Logger
-	relayer      *relayer.Relayer
-	mu           sync.Mutex
-	shuttingDown bool
-	shutdown     chan struct{}
-	publishes    sync.WaitGroup
-	handlers     sync.WaitGroup
-	senders      sync.WaitGroup
-	getBoxFn     func(string) (*msg.Box, error)
+	ctx               context.Context
+	logger            *zerolog.Logger
+	relayer           *relayer.Relayer
+	mu                sync.Mutex
+	shuttingDown      bool
+	shutdown          chan struct{}
+	publishes         sync.WaitGroup
+	subscribeHandlers sync.WaitGroup
+	senders           sync.WaitGroup
+	getBoxFn          func(string) (*msg.Box, error)
 }
 
 func NewService(ctx context.Context, logger *zerolog.Logger, seed []byte, relayerAddrs []string, mdnsEnabled bool, dhtEnabled bool, bootstrapPeers []string) (*Service, error) {
@@ -61,7 +61,7 @@ func NewService(ctx context.Context, logger *zerolog.Logger, seed []byte, relaye
 func (service *Service) Close() error {
 	service.BeginShutdown()
 	service.publishes.Wait()
-	service.handlers.Wait()
+	service.subscribeHandlers.Wait()
 	service.senders.Wait()
 	if service.relayer != nil {
 		return service.relayer.Close()
@@ -84,22 +84,28 @@ func (service *Service) CancelBackend() {
 	}
 }
 
-func (service *Service) admit(publish bool) bool {
+func (service *Service) admitPublish() bool {
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	if service.shuttingDown {
 		return false
 	}
-	if publish {
-		service.publishes.Add(1)
-	} else {
-		service.handlers.Add(1)
+	service.publishes.Add(1)
+	return true
+}
+
+func (service *Service) admitSubscribe() bool {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	if service.shuttingDown {
+		return false
 	}
+	service.subscribeHandlers.Add(1)
 	return true
 }
 
 func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.PublishRes, error) {
-	if !service.admit(true) {
+	if !service.admitPublish() {
 		return nil, status.Error(codes.Unavailable, "service is shutting down")
 	}
 	defer service.publishes.Done()
@@ -125,7 +131,6 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 		return &publishRes, err
 	}
 
-	// get msg center
 	// get msg box
 	var msgBox *msg.Box
 	if service.getBoxFn != nil {
@@ -154,15 +159,19 @@ func (service *Service) Publish(ctx context.Context, req *pb.PublishReq) (*pb.Pu
 	return &publishRes, nil
 }
 func (service *Service) Subscribe(req *pb.SubscribeReq, stream pb.MsgLake_SubscribeServer) error {
-	if !service.admit(false) {
+	if !service.admitSubscribe() {
 		return status.Error(codes.Unavailable, "service is shutting down")
 	}
-	defer service.handlers.Done()
+	defer service.subscribeHandlers.Done()
 	return service.subscribe(req, stream)
 }
 
 func (service *Service) subscribe(req *pb.SubscribeReq, stream pb.MsgLake_SubscribeServer) error {
-	fail := &pb.SubscribeRes{Type: pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK, TopicId: req.GetTopicId(), Res: &pb.SubscribeRes_Ok{Ok: false}}
+	fail := &pb.SubscribeRes{
+		Type:    pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK,
+		TopicId: req.GetTopicId(),
+		Res:     &pb.SubscribeRes_Ok{Ok: false},
+	}
 	if !util.CheckStrLen(req.GetTopicId(), MinTopicIDLen, MaxTopicIDLen) || protocol.VerifySubscribe(req.GetTopicId(), req.GetSignature()) != nil {
 		return service.waitSender(stream, service.startSender(stream, fail, nil), nil)
 	}
@@ -194,7 +203,12 @@ func (service *Service) subscribe(req *pb.SubscribeReq, stream pb.MsgLake_Subscr
 		return service.waitSender(stream, service.startSender(stream, fail, nil), nil)
 	}
 	defer box.LeaveSub(subscriberID)
-	ack := &pb.SubscribeRes{Type: pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK, TopicId: req.GetTopicId(), SubscriberId: subscriberID, Res: &pb.SubscribeRes_Ok{Ok: true}}
+	ack := &pb.SubscribeRes{
+		Type:         pb.SubscribeResType_SUBSCRIBE_RES_TYPE_ACK,
+		TopicId:      req.GetTopicId(),
+		SubscriberId: subscriberID,
+		Res:          &pb.SubscribeRes_Ok{Ok: true},
+	}
 	return service.waitSender(stream, service.startSender(stream, ack, subscriber), subscriber)
 }
 
@@ -246,7 +260,12 @@ func (service *Service) startSender(stream pb.MsgLake_SubscribeServer, ack *pb.S
 					return
 				default:
 				}
-				if err := send(&pb.SubscribeRes{Type: pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY, Res: &pb.SubscribeRes_TimestampedSignedMsgCapsule{TimestampedSignedMsgCapsule: capsule}}); err != nil {
+				if err := send(&pb.SubscribeRes{
+					Type: pb.SubscribeResType_SUBSCRIBE_RES_TYPE_RELAY,
+					Res: &pb.SubscribeRes_TimestampedSignedMsgCapsule{
+						TimestampedSignedMsgCapsule: capsule,
+					},
+				}); err != nil {
 					result <- err
 					return
 				}

@@ -59,7 +59,10 @@ type listenerResult struct {
 
 func listenWithSignal(signalAt <-chan time.Time, listen func() (net.Listener, error)) (net.Listener, time.Time, bool, error) {
 	created := make(chan listenerResult, 1)
-	go func() { listener, err := listen(); created <- listenerResult{listener, err} }()
+	go func() {
+		listener, err := listen()
+		created <- listenerResult{listener, err}
+	}()
 	select {
 	case result := <-created:
 		return result.listener, time.Time{}, false, result.err
@@ -186,7 +189,10 @@ func shutdownServiceWithin(service shutdownTarget, server grpcLifecycle, at time
 	deadline := at.Add(timeout)
 	service.BeginShutdown()
 	grpcDone := make(chan struct{})
-	go func() { server.GracefulStop(); close(grpcDone) }()
+	go func() {
+		server.GracefulStop()
+		close(grpcDone)
+	}()
 	cleanupDone := make(chan error, 1)
 	go func() { cleanupDone <- service.Close() }()
 	timer := time.NewTimer(time.Until(deadline))
