@@ -5,6 +5,7 @@ import (
 
 	"go.uber.org/ratelimit"
 	"google.golang.org/grpc"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 const (
@@ -18,7 +19,9 @@ var (
 func UnaryServerInterceptor() grpc.UnaryServerInterceptor {
 	rl := ratelimit.New(unaryServerInterceptorRateLimit)
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
-		rl.Take()
+		if info.FullMethod != healthpb.Health_Check_FullMethodName {
+			rl.Take()
+		}
 		return handler(ctx, req)
 	}
 }

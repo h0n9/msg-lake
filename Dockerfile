@@ -12,13 +12,14 @@ COPY client/ client/
 COPY msg/ msg/
 COPY lake/ lake/
 COPY relayer/ relayer/
-RUN go build ./cmd/msg-lake
+RUN go build -o /usr/src/app/msg-lake ./cmd/msg-lake && CGO_ENABLED=0 go build -o /usr/src/app/msg-lake-health ./cmd/msg-lake-health
 
 # runner
 FROM alpine:3.22 AS runner
 WORKDIR /usr/bin/app
 RUN addgroup --system app && adduser --system --shell /bin/false --ingroup app app
 COPY --from=builder /usr/src/app/msg-lake .
+COPY --from=builder /usr/src/app/msg-lake-health /usr/local/bin/msg-lake-health
 RUN chown -R app:app /usr/bin/app
 USER app
 ENTRYPOINT [ "/usr/bin/app/msg-lake" ]
