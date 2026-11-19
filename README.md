@@ -39,6 +39,38 @@ subscription callback by passing `client.WithReceivedMessageVerification(true)`
 to `client.NewClient`. This end-to-end client verification is disabled by
 default to avoid an ECDSA verification for every subscriber delivery.
 
+## Availability and delivery
+
+The Compose stack uses Envoy to discover the agent replicas through Docker DNS
+and route new gRPC calls only to agents reporting `SERVING` for the `MsgLake`
+gRPC health service. Agents report `NOT_SERVING` when shutdown begins. Agent
+containers use a gRPC health probe, and Envoy actively checks each agent through
+the same gRPC health service. The Envoy container checks its own readiness via
+its local admin `/ready` endpoint. Health checks do not consume the agent's
+Publish rate limit. Start the stack with `docker compose up --build`.
+
+The Go client keeps one gRPC connection to its configured address. If a
+Subscribe stream ends with EOF, `Unavailable`, or `DeadlineExceeded`, it opens
+a new stream through that address. Its five-second ACK limit applies only until
+the first ACK; retries use capped backoff and stop on context cancellation or
+`Close`. A failed ACK, invalid received capsule when verification is enabled,
+or a slow-subscriber `ResourceExhausted` error is returned instead of retried.
+An ACK means local subscription registration, not remote mesh readiness.
+
+Publish calls are not replayed by the application or an explicit proxy retry
+policy after an error because the agent might already have accepted them. The
+system delivers live messages only. Messages during a reconnect gap may be
+missed, and a handoff may produce duplicates. There is no replay cursor or
+exactly-once guarantee.
+
+The interactive client and loader create a fresh random signing key each time
+their process starts. `--nickname` is a display label, not key material. The
+default nickname is also newly chosen on each start. Reusing a nickname after
+restart does not restore the previous public key, and existing nickname-derived
+demo identities are not migrated. No key is stored by these commands. A `docker
+compose up` that reuses an already running container does not start a new
+process; recreate the container to obtain a new key.
+
 ## Getting Started
 
 To get started with Message Lake, follow these steps:
@@ -51,7 +83,7 @@ docker run --network "host" --rm ghcr.io/h0n9/msg-lake:latest agent
 Alternatively, you can use the docker-compose command to deploy a cluster of
 msg-lake agents:
 ```shell
-docker-compose up
+docker compose up --build
 ```
 
 Make sure you have docker-compose installed if you choose to use the command

@@ -16,8 +16,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/postie-labs/go-postie-lib/crypto"
-
+	"github.com/h0n9/msg-lake/cli/identity"
 	"github.com/h0n9/msg-lake/client"
 	pb "github.com/h0n9/msg-lake/proto"
 )
@@ -40,32 +39,15 @@ var Cmd = &cobra.Command{
 
 		// init sig channel
 		sigCh := make(chan os.Signal, 1)
-		defer close(sigCh)
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		defer signal.Stop(sigCh)
 
 		// init ctx with cancel
 		ctx, cancel := context.WithCancel(context.Background())
-
-		// listen signals
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			select {
-			case <-ctx.Done():
-				return
-			case s := <-sigCh:
-				fmt.Printf("got signal %v, attempting graceful shutdown\n", s)
-				if msgLakeClient != nil {
-					msgLakeClient.Close()
-				}
-				fmt.Printf("cancelling ctx ... ")
-				cancel()
-				fmt.Printf("done\n")
-			}
-		}()
+		defer cancel()
 
 		// init privKey
-		privKey, err := crypto.GenPrivKeyFromSeed([]byte(nickname))
+		privKey, err := identity.NewDemoKey()
 		if err != nil {
 			return err
 		}
@@ -76,6 +58,23 @@ var Cmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		defer msgLakeClient.Close()
+		stopInput := context.AfterFunc(ctx, func() { _ = os.Stdin.Close() })
+		defer stopInput()
+
+		// listen signals
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			select {
+			case <-ctx.Done():
+				return
+			case s := <-sigCh:
+				fmt.Printf("got signal %v, attempting graceful shutdown\n", s)
+				cancel()
+				msgLakeClient.Close()
+			}
+		}()
 
 		// execute goroutine (receiver)
 		wg.Add(1)
@@ -144,7 +143,7 @@ func printInput(newline bool) {
 	if newline {
 		s = "\r\n" + s
 	}
-	fmt.Printf(s, "me")
+	fmt.Printf(s, nickname)
 }
 
 func printOutput(newline bool, timestamped *pb.TimestampedSignedMsgCapsule) {
@@ -173,5 +172,5 @@ func init() {
 	Cmd.Flags().BoolVarP(&tlsEnabled, "tls", "t", false, "enable tls connection")
 	Cmd.Flags().StringVar(&hostAddr, "host", "localhost:8080", "host addr")
 	Cmd.Flags().StringVar(&topicID, "topic", "life is beautiful", "topic id")
-	Cmd.Flags().StringVarP(&nickname, "nickname", "n", fmt.Sprintf("alien-%d", r), "consumer id")
+	Cmd.Flags().StringVarP(&nickname, "nickname", "n", fmt.Sprintf("alien-%d", r), "display nickname")
 }

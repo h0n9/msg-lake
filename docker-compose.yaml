@@ -1,15 +1,16 @@
-version: "3.8"
-
 services:
   agent:
-    build:
-      context: .
+    build: .
     image: ghcr.io/h0n9/msg-lake
     environment:
       - UNARY_SERVER_INTERCEPTOR_RATE_LIMIT=10
     command: ["agent", "--mdns"]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test: ["CMD", "/usr/local/bin/msg-lake-health"]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 2
     deploy:
       replicas: 3
       resources:
@@ -19,30 +20,45 @@ services:
         reservations:
           cpus: "1.0"
           memory: 256M
-  nginx:
+  envoy:
     depends_on:
-      - agent
-    image: nginx:1.23.4-alpine3.17
-    restart: always
+      agent:
+        condition: service_healthy
+    image: envoyproxy/envoy:v1.39.1
     volumes:
-      - ./misc/nginx.conf:/etc/nginx/conf.d/msg-lake.conf:ro
+      - ./misc/envoy.yaml:/etc/envoy/envoy.yaml:ro
+    restart: always
     ports:
       - 8080-8082:8080
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      test:
+        - CMD
+        - /usr/bin/bash
+        - -ec
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9901;
+          printf 'GET /ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3;
+          IFS= read -r status <&3;
+          [[ "$$status" == *" 200 "* ]]
+      interval: 5s
+      timeout: 3s
+      start_period: 10s
+      retries: 2
     deploy:
       replicas: 3
   client:
     depends_on:
-      - nginx
+      envoy:
+        condition: service_healthy
     image: ghcr.io/h0n9/msg-lake
-    command: ["client", "--host", "nginx:8080"]
+    command: ["client", "--host", "envoy:8080"]
     deploy:
       replicas: 3
   loader:
     depends_on:
-      - nginx
+      envoy:
+        condition: service_healthy
     image: ghcr.io/h0n9/msg-lake
-    command: ["tools", "loader", "--interval", "10ms", "--host", "nginx:8080"]
+    command: ["tools", "loader", "--interval", "10ms", "--host", "envoy:8080"]
     deploy:
       replicas: 10

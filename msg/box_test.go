@@ -976,3 +976,55 @@ func TestCanceledLastPendingJoinDoesNotKeepWorkerRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A Box is retained while idle, but its subscriber and subscription worker must
+// be released on every generation. Gate backend Cancel to observe both phases
+// separately; no Box.Close or process shutdown participates in the assertions.
+func TestRepeatedLastSubscriberRemovalDrainsWorker(t *testing.T) {
+	for _, eviction := range []bool{false, true} {
+		name := "leave"
+		if eviction {
+			name = "eviction"
+		}
+		t.Run(name, func(t *testing.T) {
+			box, topic := newFakeBox(t)
+			for range 100 {
+				backend := newBlockingCancelSubscription()
+				topic.outcomes <- fakeSubscribeOutcome{subscription: backend}
+				subscriber := joinTestSubscriber(t, box, "reused-id")
+				// Drain the observer on each generation (the fake has bounded channels).
+				waitSignal(t, topic.subscribeEntered, "backend subscription started")
+				if eviction {
+					for range cap(subscriber.messages) {
+						subscriber.messages <- testTimestampedMessage("queued")
+					}
+					backend.next <- fakeNextResult{data: marshalTimestampedMessage(t, "overflow")}
+					waitDone(t, subscriber, ErrSlowSubscriber)
+				} else {
+					assertOperationCompletes(t, func() error { return box.LeaveSub("reused-id") })
+					waitDone(t, subscriber, nil)
+				}
+				waitSignal(t, backend.cancelEntered, "worker reached backend Cancel")
+				drained := make(chan struct{})
+				go func() { box.workerWG.Wait(); close(drained) }()
+				select {
+				case <-drained:
+					t.Fatal("worker finished before backend Cancel returned")
+				default:
+				}
+				backend.releaseCancel()
+				waitSignal(t, backend.canceled, "backend cancellation completed")
+				waitSignal(t, drained, "subscription worker exited")
+				if calls := backend.cancelCalls.Load(); calls != 1 {
+					t.Fatalf("Cancel calls = %d", calls)
+				}
+				// Next iteration successfully reuses this same ID and retained Box.
+				select {
+				case <-box.done:
+					t.Fatal("idle Box was closed")
+				default:
+				}
+			}
+		})
+	}
+}

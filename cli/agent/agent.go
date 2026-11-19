@@ -16,6 +16,8 @@ import (
 	"github.com/spf13/cobra"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/health"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/h0n9/msg-lake/lake"
 	pb "github.com/h0n9/msg-lake/proto"
@@ -142,23 +144,35 @@ func runAgent(cmd *cobra.Command, args []string) error {
 		return result.err
 	}
 	service := result.service
-	server := grpc.NewServer(grpc.UnaryInterceptor(util.UnaryServerInterceptor()))
-	pb.RegisterMsgLakeServer(server, service)
+	server, healthServer := newGRPCServer(service)
+	stop := func(at time.Time) error {
+		healthServer.Shutdown()
+		return shutdownService(service, server, at)
+	}
 	listener, listenSignalAt, interrupted, err := listenWithSignal(signalAt, func() (net.Listener, error) { return net.Listen("tcp", grpcListenAddr) })
 	if interrupted {
-		return shutdownService(service, server, listenSignalAt)
+		return stop(listenSignalAt)
 	}
 	if err != nil {
-		return errors.Join(err, shutdownService(service, server, shutdownStart(signalAt)))
+		return errors.Join(err, stop(shutdownStart(signalAt)))
 	}
 	served := make(chan error, 1)
 	go func() { served <- server.Serve(listener) }()
 	select {
 	case at := <-signalAt:
-		return shutdownService(service, server, at)
+		return stop(at)
 	case err := <-served:
-		return errors.Join(err, shutdownService(service, server, shutdownStart(signalAt)))
+		return errors.Join(err, stop(shutdownStart(signalAt)))
 	}
+}
+
+func newGRPCServer(service pb.MsgLakeServer) (*grpc.Server, *health.Server) {
+	server := grpc.NewServer(grpc.UnaryInterceptor(util.UnaryServerInterceptor()))
+	pb.RegisterMsgLakeServer(server, service)
+	healthServer := health.NewServer()
+	healthpb.RegisterHealthServer(server, healthServer)
+	healthServer.SetServingStatus(pb.MsgLake_ServiceDesc.ServiceName, healthpb.HealthCheckResponse_SERVING)
+	return server, healthServer
 }
 
 func shutdownStart(signalAt <-chan time.Time) time.Time {

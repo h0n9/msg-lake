@@ -13,8 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/postie-labs/go-postie-lib/crypto"
-
+	"github.com/h0n9/msg-lake/cli/identity"
 	"github.com/h0n9/msg-lake/client"
 )
 
@@ -42,11 +41,29 @@ func runE(cmd *cobra.Command, args []string) error {
 
 	// init sig channel
 	sigCh := make(chan os.Signal, 1)
-	defer close(sigCh)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigCh)
 
 	// init ctx with cancel
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	/////////////////////////////////
+	// real things begin from here //
+	/////////////////////////////////
+
+	// init privKey
+	privKey, err := identity.NewDemoKey()
+	if err != nil {
+		return err
+	}
+	// init msg lake client
+	msgLakeClient, err = client.NewClient(privKey, hostAddr, tlsEnabled)
+	if err != nil {
+		return err
+	}
+	defer msgLakeClient.Close()
+	fmt.Printf("loader <%s> started\n", nickname)
 
 	// listen signals
 	wg.Add(1)
@@ -54,36 +71,13 @@ func runE(cmd *cobra.Command, args []string) error {
 		defer wg.Done()
 		select {
 		case <-ctx.Done():
-			fmt.Println("cancelled context")
+			return
 		case s := <-sigCh:
-			fmt.Printf("got signal %v\n", s)
-			fmt.Printf("cancelling ctx ... ")
+			fmt.Printf("got signal %v, cancelling loader\n", s)
 			cancel()
-			fmt.Printf("done\n")
-		}
-		if msgLakeClient != nil {
-			fmt.Printf("closing msg lake client ... ")
 			msgLakeClient.Close()
-			fmt.Printf("done\n")
 		}
 	}()
-
-	/////////////////////////////////
-	// real things begin from here //
-	/////////////////////////////////
-
-	// init privKey
-	privKey, err := crypto.GenPrivKeyFromSeed([]byte(nickname))
-	if err != nil {
-		return err
-	}
-	// pubKeyBytes := privKey.PubKey().Bytes()
-
-	// init msg lake client
-	msgLakeClient, err = client.NewClient(privKey, hostAddr, tlsEnabled)
-	if err != nil {
-		return err
-	}
 
 	wg.Add(1)
 	go func() {
@@ -108,7 +102,7 @@ func runE(cmd *cobra.Command, args []string) error {
 					cancel()
 					return
 				}
-				fmt.Println(i)
+				fmt.Printf("loader <%s>: %d\n", nickname, i)
 				err = msgLakeClient.Publish(ctx, topicID, strconv.Itoa(i))
 				if err != nil {
 					fmt.Println(err)
@@ -131,7 +125,7 @@ func init() {
 	Cmd.Flags().BoolVarP(&tlsEnabled, "tls", "t", false, "enable tls connection")
 	Cmd.Flags().StringVar(&hostAddr, "host", "localhost:8080", "host addr")
 	Cmd.Flags().StringVar(&topicID, "topic", "life is beautiful", "topic id")
-	Cmd.Flags().StringVarP(&nickname, "nickname", "n", fmt.Sprintf("alien-%d", r), "consumer id")
+	Cmd.Flags().StringVarP(&nickname, "nickname", "n", fmt.Sprintf("alien-%d", r), "display nickname")
 
 	Cmd.Flags().DurationVar(&interval, "interval", 1*time.Second, "interval")
 	Cmd.Flags().IntVarP(&loadCount, "count", "c", 0, "load count (0 means unlimited)")
